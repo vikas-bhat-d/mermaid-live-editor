@@ -91,7 +91,7 @@
           if (!graphDiv) {
             throw new Error('graph-div not found');
           }
-          if (state.rough) {
+          if (false && state.rough) {
             const svg2roughjs = new Svg2Roughjs('#container');
             svg2roughjs.svg = graphDiv;
             await svg2roughjs.sketch();
@@ -139,13 +139,15 @@
 
   function getMermaidNodeId(element: Element): string | null {
     const nodeEl = element.closest('.node');
+    console.log('[VisualEditor] getMermaidNodeId called. target:', element, 'found closest .node:', nodeEl);
     if (!nodeEl) return null;
-    const idAttr = nodeEl.id;
+    let idAttr = nodeEl.id;
+    console.log('[VisualEditor] found node idAttr:', idAttr);
     if (idAttr) {
-      const parts = idAttr.split('-');
-      if (parts.length >= 3) {
-        return parts.slice(1, -1).join('-');
-      }
+      idAttr = idAttr.replace(/^[a-zA-Z0-9_]+-/, ''); // e.g. flowchart-
+      idAttr = idAttr.replace(/-\d+$/, ''); // e.g. -95
+      console.log('[VisualEditor] parsed node ID:', idAttr);
+      return idAttr;
     }
     return null;
   }
@@ -167,8 +169,10 @@
   function handleMouseDown(e: MouseEvent) {
     if (editingNodeId) return;
     const target = e.target as Element;
+    console.log('[VisualEditor] MouseDown on target:', target);
     const nodeId = getMermaidNodeId(target);
     if (nodeId) {
+      console.log('[VisualEditor] Starting drag from node:', nodeId);
       e.stopPropagation(); // Prevent pan-zoom
       isDragging = true;
       sourceNodeId = nodeId;
@@ -198,7 +202,9 @@
       e.stopPropagation();
       isDragging = false;
       const target = e.target as Element;
+      console.log('[VisualEditor] MouseUp on target:', target);
       const targetNodeId = getMermaidNodeId(target);
+      console.log('[VisualEditor] Dropped on node:', targetNodeId);
       if (targetNodeId && targetNodeId !== sourceNodeId) {
         import('svelte/store').then(({ get }) => {
           const state = get(inputStateStore);
@@ -212,11 +218,14 @@
 
   function handleDoubleClick(e: MouseEvent) {
     const target = e.target as Element;
+    console.log('[VisualEditor] Double click on target:', target, 'tagName:', target.tagName, 'className:', target.className);
     
     const edgeLabelEl = target.closest('.edgeLabel');
+    console.log('[VisualEditor] closest .edgeLabel:', edgeLabelEl);
     if (edgeLabelEl) {
       e.stopPropagation(); // Prevent pan-zoom zoom-in
-      const text = (edgeLabelEl as HTMLElement).innerText || '';
+      const text = (edgeLabelEl.textContent || '').trim();
+      console.log('[VisualEditor] editing edge with text:', text);
       editingNodeId = `EDGE:${text}`;
       editText = text.replace(/<br\s*\/?>/g, '\n');
       const rect = edgeLabelEl.getBoundingClientRect();
@@ -231,13 +240,15 @@
     }
 
     const nodeEl = target.closest('.node');
+    console.log('[VisualEditor] closest .node:', nodeEl);
     if (nodeEl) {
       e.stopPropagation(); // Prevent pan-zoom zoom-in
       const nodeId = getMermaidNodeId(nodeEl);
       if (nodeId) {
+        console.log('[VisualEditor] editing node ID:', nodeId);
         const rect = nodeEl.getBoundingClientRect();
         const labelEl = nodeEl.querySelector('.nodeLabel, .label');
-        const text = labelEl ? (labelEl as HTMLElement).innerText : '';
+        const text = labelEl ? (labelEl.textContent || '').trim() : '';
         
         editingNodeId = nodeId;
         editText = text.replace(/<br\s*\/?>/g, '\n');
@@ -249,11 +260,14 @@
           editW = rect.width;
           editH = rect.height;
         }
+      } else {
+        console.warn("[VisualEditor] Could not extract ID from node: ", nodeEl);
       }
       return;
     }
 
     if (target.closest('svg') && !target.closest('.cluster')) {
+      console.log('[VisualEditor] click fell through to background SVG. Creating new node.');
       e.stopPropagation();
       import('svelte/store').then(({ get }) => {
         const state = get(inputStateStore);
