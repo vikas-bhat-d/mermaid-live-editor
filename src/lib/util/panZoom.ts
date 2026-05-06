@@ -27,9 +27,44 @@ export class PanZoomState {
   public updateElement(diagramView: SVGElement, { pan, zoom }: Pick<State, 'pan' | 'zoom'>) {
     this.pzoom?.destroy();
     let hammer: HammerManager | undefined;
+    
+    // Track keys
+    let isSpacePressed = false;
+    let isCtrlPressed = false;
+    const keydownListener = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && (e.target as Element).tagName !== 'TEXTAREA') {
+        isSpacePressed = true;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        isCtrlPressed = true;
+      }
+    };
+    const keyupListener = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        isSpacePressed = false;
+      }
+      if (!e.ctrlKey && !e.metaKey) {
+        isCtrlPressed = false;
+      }
+    };
+    window.addEventListener('keydown', keydownListener);
+    window.addEventListener('keyup', keyupListener);
+
     this.pzoom = panzoom(diagramView, {
       center: true,
       controlIconsEnabled: false,
+      beforeWheel: function(e) {
+        if (!e.ctrlKey && !e.metaKey) {
+          return false; // Disable zoom if Ctrl/Meta is not pressed
+        }
+        return true;
+      },
+      beforePan: function(oldPan, newPan) {
+        if (!isSpacePressed) {
+          return false; // Disable pan if Space is not pressed
+        }
+        return true;
+      },
       customEventsHandler: {
         haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
         init: function (options) {
@@ -44,6 +79,7 @@ export class PanZoomState {
             pannedY = 0;
           };
           const handlePan = (event: HammerInput) => {
+            if (!isSpacePressed) return; // Enforce space restriction for hammer pan too
             instance.panBy({ x: event.deltaX - pannedX, y: event.deltaY - pannedY });
             pannedX = event.deltaX;
             pannedY = event.deltaY;
@@ -73,6 +109,8 @@ export class PanZoomState {
         },
         destroy: function () {
           hammer?.destroy();
+          window.removeEventListener('keydown', keydownListener);
+          window.removeEventListener('keyup', keyupListener);
         }
       },
       fit: true,

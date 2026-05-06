@@ -74,36 +74,6 @@
 </script>
 
 <div class="flex h-full flex-col overflow-hidden">
-  {#snippet mobileToggle()}
-    <div class="flex items-center gap-2">
-      Edit <Switch
-        id="editorMode"
-        class="data-[state=checked]:bg-accent"
-        bind:checked={isViewMode}
-        onclick={() => {
-          logEvent('mobileViewToggle');
-        }} /> View
-    </div>
-  {/snippet}
-
-  <Navbar mobileToggle={isMobile ? mobileToggle : undefined}>
-    <Toggle bind:pressed={isHistoryOpen} size="sm">
-      <HistoryIcon />
-    </Toggle>
-    <Share />
-    <McWrapper>
-      <Button
-        variant="accent"
-        size="sm"
-        href={$urlsStore.mermaidChart({ medium: 'save_diagram' }).save}
-        target="_blank"
-        onclick={() => logMermaidChartClick('saveDiagram')}>
-        <MermaidChartIcon />
-        Save diagram
-      </Button>
-    </McWrapper>
-  </Navbar>
-
   <div class="flex flex-1 flex-col overflow-hidden" bind:clientWidth={width}>
     <div
       class={[
@@ -122,35 +92,15 @@
               tabs={editorTabs}
               activeTabID={$stateStore.editorMode}
               isClosable={false}>
-              {#snippet actions()}
-                <DiagramDocButton />
-              {/snippet}
               <Editor {isMobile} />
             </Card>
-
-            <div class="group flex flex-wrap justify-between gap-4 sm:gap-6">
-              <Preset />
-              <Actions />
-            </div>
           </div>
         </Resizable.Pane>
         <Resizable.Handle class="mr-1 hidden opacity-0 sm:block" />
         <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
           <View {panZoomState} shouldShowGrid={$stateStore.grid} />
-          <div class="absolute top-0 left-5 hidden md:block"><EnhancedEditsButton /></div>
-          <div class="absolute top-0 right-0"><PanZoomToolbar {panZoomState} /></div>
-          <div class="absolute right-0 bottom-0"><VersionSecurityToolbar /></div>
-          <div class="absolute bottom-0 left-0 sm:left-5"><SyncRoughToolbar /></div>
         </Resizable.Pane>
-        {#if isHistoryOpen}
-          <Resizable.Handle class="ml-1 hidden opacity-0 sm:block" />
-          <Resizable.Pane minSize={15} defaultSize={30} class="hidden h-full grow flex-col sm:flex">
-            <History />
-          </Resizable.Pane>
-        {/if}
       </Resizable.PaneGroup>
     </div>
   </div>
 </div>
-
-<EditorChooserModal bind:open={showEditorChooser} />
