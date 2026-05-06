@@ -188,6 +188,7 @@
   let sourceNodeId = $state<string | null>(null);
 
   let editingNodeId = $state<string | null>(null);
+  let editingLabelEl = $state<Element | null>(null);
   let editText = $state<string>('');
   let editX = $state(0);
   let editY = $state(0);
@@ -295,8 +296,8 @@
     const target = e.target as Element;
     console.log('[VisualEditor] Double click on target:', target, 'tagName:', target.tagName, 'className:', target.className);
     
-    // Broadened the edge selector to catch elk layout and generic edge wrappers
-    const edgeLabelEl = target.closest('.edgeLabel, .edge-label, .label, [class*="edgeLabel"]');
+    // Strict edge selector to prevent matching the whole graph
+    const edgeLabelEl = target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]');
     // Ensure it's not actually a node label
     if (edgeLabelEl && !target.closest('.node')) {
       e.stopPropagation(); // Prevent pan-zoom zoom-in
@@ -305,6 +306,10 @@
       if (text) {
         editingNodeId = `EDGE:${text}`;
         editText = text.replace(/<br\s*\/?>/g, '\n');
+        
+        editingLabelEl = edgeLabelEl;
+        (editingLabelEl as HTMLElement).style.visibility = 'hidden';
+        
         const rect = edgeLabelEl.getBoundingClientRect();
         if (view) {
           const viewRect = view.getBoundingClientRect();
@@ -326,24 +331,28 @@
       const nodeId = getMermaidNodeId(nodeEl);
       if (nodeId) {
         console.log('[VisualEditor] editing node ID:', nodeId);
-        const rect = nodeEl.getBoundingClientRect();
         const labelEl = nodeEl.querySelector('.nodeLabel, .label');
         const text = labelEl ? (labelEl.textContent || '').trim() : '';
         
         editingNodeId = nodeId;
         editText = text.replace(/<br\s*\/?>/g, '\n');
         
-        if (view) {
-          const viewRect = view.getBoundingClientRect();
-          // Adjust slightly to overlay perfectly
-          editX = rect.left - viewRect.left - 2;
-          editY = rect.top - viewRect.top - 2;
-          editW = rect.width + 4;
-          editH = rect.height + 4;
+        if (labelEl) {
+          editingLabelEl = labelEl;
+          (editingLabelEl as HTMLElement).style.visibility = 'hidden';
           
-          // Compute a font size relative to the scaled node height.
-          // Standard node height is usually 40px unscaled, and standard font size is 14px (ratio ~0.35)
-          editFontSize = Math.max(12, rect.height * 0.35);
+          const rect = labelEl.getBoundingClientRect();
+          if (view) {
+            const viewRect = view.getBoundingClientRect();
+            editX = rect.left - viewRect.left;
+            editY = rect.top - viewRect.top;
+            editW = rect.width;
+            editH = rect.height;
+            // Compute a font size relative to the scaled node height.
+            // Text is typically a bit smaller than the node's full height.
+            const nodeRect = nodeEl.getBoundingClientRect();
+            editFontSize = Math.max(12, nodeRect.height * 0.35);
+          }
         }
       } else {
         console.warn("[VisualEditor] Could not extract ID from node: ", nodeEl);
@@ -417,9 +426,22 @@
         }
       }
       
+      if (editingLabelEl) {
+        (editingLabelEl as HTMLElement).style.visibility = 'visible';
+        editingLabelEl = null;
+      }
+      
       updateCodeStore({ code: newCode, updateDiagram: true });
       editingNodeId = null;
     }
+  }
+
+  function cancelEdit() {
+    if (editingLabelEl) {
+      (editingLabelEl as HTMLElement).style.visibility = 'visible';
+      editingLabelEl = null;
+    }
+    editingNodeId = null;
   }
 
   onMount(() => {
@@ -488,7 +510,7 @@
 
   {#if editingNodeId}
     <textarea
-      class="absolute bg-indigo-50/95 text-indigo-950 font-sans border-2 border-indigo-400 focus:ring-4 focus:ring-indigo-500/30 z-[100] rounded-md shadow-xl outline-none resize-none overflow-hidden text-center p-1 flex items-center justify-center leading-tight"
+      class="absolute bg-transparent text-inherit font-sans focus:ring-0 focus:outline-none z-[100] resize-none overflow-hidden text-center p-0 m-0 leading-tight"
       style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(editH, 20)}px; font-size: {editFontSize}px;"
       bind:value={editText}
       onblur={saveEdit}
@@ -497,7 +519,7 @@
           e.preventDefault();
           saveEdit();
         } else if (e.key === 'Escape') {
-          editingNodeId = null;
+          cancelEdit();
         }
       }}
       autofocus
