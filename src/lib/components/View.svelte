@@ -193,6 +193,7 @@
   let editY = $state(0);
   let editW = $state(0);
   let editH = $state(0);
+  let editFontSize = $state(16);
 
   let selectedNode = $state<Element | null>(null);
   let quickActionX = $state(0);
@@ -210,8 +211,9 @@
         // Scale the button size relative to the node height (e.g. 40%), min 16px, max 48px
         quickActionSize = Math.max(16, Math.min(48, rect.height * 0.4));
         
-        quickActionX = rect.right - viewRect.left + 5;
-        quickActionY = rect.top - viewRect.top + (rect.height / 2) - (quickActionSize / 2);
+        // Position at the bottom center of the node
+        quickActionX = rect.left - viewRect.left + (rect.width / 2) - (quickActionSize / 2);
+        quickActionY = rect.bottom - viewRect.top + 5;
         
         rafId = requestAnimationFrame(updatePosition);
       };
@@ -293,21 +295,26 @@
     const target = e.target as Element;
     console.log('[VisualEditor] Double click on target:', target, 'tagName:', target.tagName, 'className:', target.className);
     
-    const edgeLabelEl = target.closest('.edgeLabel');
-    console.log('[VisualEditor] closest .edgeLabel:', edgeLabelEl);
-    if (edgeLabelEl) {
+    // Broadened the edge selector to catch elk layout and generic edge wrappers
+    const edgeLabelEl = target.closest('.edgeLabel, .edge-label, .label, [class*="edgeLabel"]');
+    // Ensure it's not actually a node label
+    if (edgeLabelEl && !target.closest('.node')) {
       e.stopPropagation(); // Prevent pan-zoom zoom-in
       const text = (edgeLabelEl.textContent || '').trim();
       console.log('[VisualEditor] editing edge with text:', text);
-      editingNodeId = `EDGE:${text}`;
-      editText = text.replace(/<br\s*\/?>/g, '\n');
-      const rect = edgeLabelEl.getBoundingClientRect();
-      if (view) {
-        const viewRect = view.getBoundingClientRect();
-        editX = rect.left - viewRect.left;
-        editY = rect.top - viewRect.top;
-        editW = rect.width;
-        editH = rect.height;
+      if (text) {
+        editingNodeId = `EDGE:${text}`;
+        editText = text.replace(/<br\s*\/?>/g, '\n');
+        const rect = edgeLabelEl.getBoundingClientRect();
+        if (view) {
+          const viewRect = view.getBoundingClientRect();
+          editX = rect.left - viewRect.left;
+          editY = rect.top - viewRect.top;
+          editW = rect.width;
+          editH = rect.height;
+          // Approx font size relative to bounding box
+          editFontSize = Math.max(12, rect.height * 0.5);
+        }
       }
       return;
     }
@@ -333,6 +340,10 @@
           editY = rect.top - viewRect.top - 2;
           editW = rect.width + 4;
           editH = rect.height + 4;
+          
+          // Compute a font size relative to the scaled node height.
+          // Standard node height is usually 40px unscaled, and standard font size is 14px (ratio ~0.35)
+          editFontSize = Math.max(12, rect.height * 0.35);
         }
       } else {
         console.warn("[VisualEditor] Could not extract ID from node: ", nodeEl);
@@ -385,9 +396,15 @@
       if (editingNodeId!.startsWith('EDGE:')) {
         const oldText = editingNodeId!.substring(5);
         if (oldText) {
-          const escapedOldText = oldText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-          const edgeRegex = new RegExp(`(\\||-)\\s*${escapedOldText}\\s*(\\||->)`, 'g');
-          newCode = newCode.replace(edgeRegex, `$1${textToSave}$2`);
+          // Extremely robust string replace for edge lines
+          const lines = newCode.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            // Check if line looks like an edge connection and contains the old text
+            if (lines[i].includes(oldText) && lines[i].match(/-->|---|-.->|==>|--|==|-\.-/)) {
+               lines[i] = lines[i].replace(oldText, textToSave);
+            }
+          }
+          newCode = lines.join('\n');
         }
       } else {
         const escapedNodeId = editingNodeId!.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -471,8 +488,8 @@
 
   {#if editingNodeId}
     <textarea
-      class="absolute bg-indigo-50/95 text-indigo-950 font-sans border-2 border-indigo-400 focus:ring-4 focus:ring-indigo-500/30 z-[100] rounded-md shadow-xl outline-none resize-none overflow-hidden text-center p-1"
-      style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 80)}px; height: {Math.max(editH, 40)}px;"
+      class="absolute bg-indigo-50/95 text-indigo-950 font-sans border-2 border-indigo-400 focus:ring-4 focus:ring-indigo-500/30 z-[100] rounded-md shadow-xl outline-none resize-none overflow-hidden text-center p-1 flex items-center justify-center leading-tight"
+      style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(editH, 20)}px; font-size: {editFontSize}px;"
       bind:value={editText}
       onblur={saveEdit}
       onkeydown={(e) => {
