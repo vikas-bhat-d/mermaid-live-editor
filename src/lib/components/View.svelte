@@ -139,7 +139,12 @@
 
   function getMermaidNodeId(element: Element): string | null {
     const nodeEl = element.closest('.node');
-    console.log('[VisualEditor] getMermaidNodeId called. target:', element, 'found closest .node:', nodeEl);
+    console.log(
+      '[VisualEditor] getMermaidNodeId called. target:',
+      element,
+      'found closest .node:',
+      nodeEl
+    );
     if (!nodeEl) return null;
     let idAttr = nodeEl.id;
     console.log('[VisualEditor] found node idAttr:', idAttr);
@@ -152,9 +157,9 @@
       idAttr = idAttr.replace(/^graph-\d+-/, '');
       idAttr = idAttr.replace(/^(flowchart|state|class)-/, '');
     } while (idAttr !== prev);
-    
+
     const code = $inputStateStore.code;
-    
+
     // Helper to verify if an ID truly exists in the user's Mermaid code
     const idExists = (id: string) => {
       const escapedId = id.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -168,14 +173,14 @@
       console.log('[VisualEditor] parsed exact node ID:', idAttr);
       return idAttr;
     }
-    
+
     // If it doesn't exist, it likely has a trailing random number from Mermaid e.g. "Christmas-95"
     const stripped = idAttr.replace(/-\d+$/, '');
     if (idExists(stripped)) {
       console.log('[VisualEditor] parsed stripped node ID:', stripped);
       return stripped;
     }
-    
+
     console.log('[VisualEditor] fallback parsed node ID:', stripped || idAttr);
     return stripped || idAttr;
   }
@@ -196,6 +201,7 @@
   let dragCurrentX = $state(0);
   let dragCurrentY = $state(0);
   let sourceNodeId = $state<string | null>(null);
+  let dragTargetNode = $state<Element | null>(null);
 
   let editingNodeId = $state<string | null>(null);
   let editingLabelEl = $state<Element | null>(null);
@@ -222,14 +228,14 @@
         if (!selectedNode || !view) return;
         const rect = selectedNode.getBoundingClientRect();
         const viewRect = view.getBoundingClientRect();
-        
+
         // Scale the button size relative to the node height (e.g. 40%), min 16px, max 48px
         quickActionSize = Math.max(16, Math.min(48, rect.height * 0.4));
-        
+
         // Position at the bottom center of the node
-        quickActionX = rect.left - viewRect.left + (rect.width / 2) - (quickActionSize / 2);
+        quickActionX = rect.left - viewRect.left + rect.width / 2 - quickActionSize / 2;
         quickActionY = rect.bottom - viewRect.top + 5;
-        
+
         rafId = requestAnimationFrame(updatePosition);
       };
       rafId = requestAnimationFrame(updatePosition);
@@ -248,7 +254,7 @@
     if (editingNodeId) return;
     const target = e.target as Element;
     console.log('[VisualEditor] MouseDown on target:', target);
-    
+
     // Check if clicking the quick action button
     if (target.closest('.quick-action-btn')) {
       return; // Handled by its own click listener
@@ -280,7 +286,7 @@
 
   function handleMouseMove(e: MouseEvent) {
     const target = e.target as Element;
-    
+
     // Handle Edge Hover Quick Actions
     if (!isDragging && !editingNodeId) {
       const pathEl = target.closest('.flowchart-link, path[class*="edge-pattern"]');
@@ -290,13 +296,13 @@
           const pathRect = pathEl.getBoundingClientRect();
           const viewRect = view?.getBoundingClientRect();
           if (viewRect) {
-            hoveredEdgeX = pathRect.left - viewRect.left + (pathRect.width / 2);
-            hoveredEdgeY = pathRect.top - viewRect.top + (pathRect.height / 2);
+            hoveredEdgeX = pathRect.left - viewRect.left + pathRect.width / 2;
+            hoveredEdgeY = pathRect.top - viewRect.top + pathRect.height / 2;
           }
         }
       } else if (!target.closest('.edge-pencil-btn')) {
-        // SVG paths are very thin (1px). To prevent the pencil from disappearing 
-        // the moment the mouse slips off the 1px line, we keep the pencil visible 
+        // SVG paths are very thin (1px). To prevent the pencil from disappearing
+        // the moment the mouse slips off the 1px line, we keep the pencil visible
         // as long as the mouse is within a 40px magnetic radius of it!
         if (hoveredEdgePath && view) {
           const viewRect = view.getBoundingClientRect();
@@ -321,6 +327,20 @@
         dragCurrentX = e.clientX - rect.left;
         dragCurrentY = e.clientY - rect.top;
       }
+
+      // Highlight the node the user is hovering over as drop target
+      const hoveredNode = (e.target as Element).closest('.node');
+      if (hoveredNode !== dragTargetNode) {
+        dragTargetNode?.classList.remove('drag-target');
+        dragTargetNode = null;
+        if (hoveredNode) {
+          const hoveredId = getMermaidNodeId(hoveredNode);
+          if (hoveredId && hoveredId !== sourceNodeId) {
+            dragTargetNode = hoveredNode;
+            dragTargetNode.classList.add('drag-target');
+          }
+        }
+      }
     }
   }
 
@@ -328,6 +348,11 @@
     if (isDragging && sourceNodeId) {
       e.stopPropagation();
       isDragging = false;
+
+      // Clear drag target highlight
+      dragTargetNode?.classList.remove('drag-target');
+      dragTargetNode = null;
+
       const target = e.target as Element;
       console.log('[VisualEditor] MouseUp on target:', target);
       const targetNodeId = getMermaidNodeId(target);
@@ -343,8 +368,15 @@
 
   function handleDoubleClick(e: MouseEvent) {
     const target = e.target as Element;
-    console.log('[VisualEditor] Double click on target:', target, 'tagName:', target.tagName, 'className:', target.className);
-    
+    console.log(
+      '[VisualEditor] Double click on target:',
+      target,
+      'tagName:',
+      target.tagName,
+      'className:',
+      target.className
+    );
+
     // Strict edge selector to prevent matching the whole graph
     const edgeLabelEl = target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]');
     // Ensure it's not actually a node label
@@ -355,10 +387,10 @@
       if (text) {
         editingNodeId = `EDGE:${text}`;
         editText = text.replace(/<br\s*\/?>/g, '\n');
-        
+
         editingLabelEl = edgeLabelEl;
         (editingLabelEl as HTMLElement).style.visibility = 'hidden';
-        
+
         const rect = edgeLabelEl.getBoundingClientRect();
         if (view) {
           const viewRect = view.getBoundingClientRect();
@@ -366,14 +398,14 @@
           editY = rect.top - viewRect.top;
           editW = rect.width;
           editH = rect.height;
-          
+
           let scale = 1;
           if (edgeLabelEl instanceof SVGGraphicsElement) {
-             const bbox = edgeLabelEl.getBBox();
-             if (bbox.height > 0) scale = rect.height / bbox.height;
+            const bbox = edgeLabelEl.getBBox();
+            if (bbox.height > 0) scale = rect.height / bbox.height;
           } else {
-             // Fallback if not an SVG element
-             scale = rect.height / (edgeLabelEl.clientHeight || 20);
+            // Fallback if not an SVG element
+            scale = rect.height / (edgeLabelEl.clientHeight || 20);
           }
           const unscaledFontSize = parseFloat(window.getComputedStyle(edgeLabelEl).fontSize) || 14;
           editFontSize = unscaledFontSize * scale;
@@ -391,14 +423,14 @@
         console.log('[VisualEditor] editing node ID:', nodeId);
         const labelEl = nodeEl.querySelector('.nodeLabel, .label');
         const text = labelEl ? (labelEl.textContent || '').trim() : '';
-        
+
         editingNodeId = nodeId;
         editText = text.replace(/<br\s*\/?>/g, '\n');
-        
+
         if (labelEl) {
           editingLabelEl = labelEl;
           (editingLabelEl as HTMLElement).style.visibility = 'hidden';
-          
+
           const nodeRect = nodeEl.getBoundingClientRect();
           if (view) {
             const viewRect = view.getBoundingClientRect();
@@ -407,30 +439,35 @@
             editY = nodeRect.top - viewRect.top;
             editW = nodeRect.width;
             editH = nodeRect.height;
-            
+
             // Exact scale calculation
             let scale = 1;
             if (nodeEl instanceof SVGGraphicsElement) {
-               const bbox = nodeEl.getBBox();
-               if (bbox.height > 0) scale = nodeRect.height / bbox.height;
+              const bbox = nodeEl.getBBox();
+              if (bbox.height > 0) scale = nodeRect.height / bbox.height;
             }
             const unscaledFontSize = parseFloat(window.getComputedStyle(labelEl).fontSize) || 16;
             editFontSize = unscaledFontSize * scale;
           }
         }
       } else {
-        console.warn("[VisualEditor] Could not extract ID from node: ", nodeEl);
+        console.warn('[VisualEditor] Could not extract ID from node: ', nodeEl);
       }
       return;
     }
 
-    if (target.closest('svg') && !target.closest('.cluster') && !target.closest('path') && !target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]')) {
+    if (
+      target.closest('svg') &&
+      !target.closest('.cluster') &&
+      !target.closest('path') &&
+      !target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]')
+    ) {
       console.log('[VisualEditor] click fell through to background SVG. Creating new node.');
       e.stopPropagation();
       const state = $inputStateStore;
       let newCode = state.code.replace(/\r\n/g, '\n');
       const newNodeId = getNextNodeId(newCode);
-      newCode += `\n  ${newNodeId}[New Node]`;
+      newCode += `\n  ${newNodeId}["New Node"]`;
       updateCodeStore({ code: newCode, updateDiagram: true });
     }
   }
@@ -439,21 +476,23 @@
     if (e.key === 'Delete' || e.key === 'Backspace') {
       // Don't delete if we are in an input/textarea
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      
+
       if (selectedNode) {
         const nodeId = getMermaidNodeId(selectedNode);
         if (nodeId) {
           const state = $inputStateStore;
           let newCode = state.code;
-          
+
           // Very naive deletion: removes any line containing the node ID exactly.
           // This removes the node definition AND any connections it's part of.
           const escapedNodeId = nodeId.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
           const lines = newCode.split('\n');
-          const regex = new RegExp(`(?:^|\\s)${escapedNodeId}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`);
-          
-          const newLines = lines.filter(line => !regex.test(line));
-          
+          const regex = new RegExp(
+            `(?:^|\\s)${escapedNodeId}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`
+          );
+
+          const newLines = lines.filter((line) => !regex.test(line));
+
           updateCodeStore({ code: newLines.join('\n'), updateDiagram: true });
           clearSelection();
         }
@@ -471,20 +510,22 @@
         const parts = editingNodeId!.split(':');
         const sourceId = parts[1];
         const targetId = parts[2];
-        const regex = new RegExp(`(${sourceId}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)\\s*${targetId})`);
+        const regex = new RegExp(
+          `(${sourceId}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)\\s*${targetId})`
+        );
         const match = newCode.match(regex);
         if (match && textToSave) {
           const edgeOpMatch = match[1].match(/(-->|---|-.->|==>|--|==|-\.-)/);
           if (edgeOpMatch) {
-             const op = edgeOpMatch[1];
-             let newOp = op;
-             if (op === '-->') newOp = `-->|${textToSave}|`;
-             else if (op === '---') newOp = `---|${textToSave}|`;
-             else if (op === '-.->') newOp = `-.->|${textToSave}|`;
-             else if (op === '==>') newOp = `==>|${textToSave}|`;
-             else newOp = `${op}|${textToSave}|`; // Fallback
-             
-             newCode = newCode.replace(match[1], `${sourceId} ${newOp} ${targetId}`);
+            const op = edgeOpMatch[1];
+            let newOp = op;
+            if (op === '-->') newOp = `-->|${textToSave}|`;
+            else if (op === '---') newOp = `---|${textToSave}|`;
+            else if (op === '-.->') newOp = `-.->|${textToSave}|`;
+            else if (op === '==>') newOp = `==>|${textToSave}|`;
+            else newOp = `${op}|${textToSave}|`; // Fallback
+
+            newCode = newCode.replace(match[1], `${sourceId} ${newOp} ${targetId}`);
           }
         }
       } else if (editingNodeId!.startsWith('EDGE:')) {
@@ -495,27 +536,32 @@
           for (let i = 0; i < lines.length; i++) {
             // Check if line looks like an edge connection and contains the old text
             if (lines[i].includes(oldText) && lines[i].match(/-->|---|-.->|==>|--|==|-\.-/)) {
-               lines[i] = lines[i].replace(oldText, textToSave);
+              lines[i] = lines[i].replace(oldText, textToSave);
             }
           }
           newCode = lines.join('\n');
         }
       } else {
+        // Always quote node labels so special chars like (), {}, [] don't break parsing
+        const quotedLabel = `"${textToSave.replace(/"/g, "'")}"`;
         const escapedNodeId = editingNodeId!.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const nodeRegex = new RegExp(`(${escapedNodeId}\\s*[\\[\\(\\{>])([^\\]\\)\\}\\>]+)([\\]\\)\\}\\>])`);
+        // Match both quoted ("...") and unquoted labels inside node brackets
+        const nodeRegex = new RegExp(
+          `(${escapedNodeId}\\s*[\\[\\(\\{>])"?([^"\\]\\)\\}\\>]*)"?([\\]\\)\\}\\>])`
+        );
         const match = newCode.match(nodeRegex);
         if (match) {
-          newCode = newCode.replace(nodeRegex, `$1${textToSave}$3`);
+          newCode = newCode.replace(nodeRegex, `$1${quotedLabel}$3`);
         } else {
-          newCode += `\n  ${editingNodeId}[${textToSave}]`;
+          newCode += `\n  ${editingNodeId}[${quotedLabel}]`;
         }
       }
-      
+
       if (editingLabelEl) {
         (editingLabelEl as HTMLElement).style.visibility = 'visible';
         editingLabelEl = null;
       }
-      
+
       updateCodeStore({ code: newCode, updateDiagram: true });
       editingNodeId = null;
     }
@@ -537,7 +583,7 @@
       view.addEventListener('dblclick', handleDoubleClick, true);
       window.addEventListener('keydown', handleKeyDownGlobal, true);
     }
-    
+
     setupPanZoomObserver();
     // Queue state changes to avoid race condition
     let pendingStateChange = Promise.resolve();
@@ -563,20 +609,26 @@
 <div
   id="view"
   bind:this={view}
-  class={['h-full w-full relative', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}
->
+  class={['relative h-full w-full', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}>
   <div id="container" bind:this={container} class="h-full overflow-auto"></div>
 
   {#if isDragging}
     <!-- Absolute overlay for the drag line -->
-    <svg class="absolute top-0 left-0 w-full h-full pointer-events-none z-40">
-      <line x1={dragStartX} y1={dragStartY} x2={dragCurrentX} y2={dragCurrentY} stroke="#3b82f6" stroke-width="3" stroke-dasharray="5,5" />
+    <svg class="pointer-events-none absolute top-0 left-0 z-40 h-full w-full">
+      <line
+        x1={dragStartX}
+        y1={dragStartY}
+        x2={dragCurrentX}
+        y2={dragCurrentY}
+        stroke="#3b82f6"
+        stroke-width="3"
+        stroke-dasharray="5,5" />
     </svg>
   {/if}
 
   {#if selectedNode}
-    <button 
-      class="quick-action-btn absolute z-50 flex items-center justify-center bg-indigo-500 text-white rounded-full shadow-lg hover:bg-indigo-600 hover:scale-110 transition-transform cursor-pointer border border-white"
+    <button
+      class="quick-action-btn absolute z-50 flex cursor-pointer items-center justify-center rounded-full border border-white bg-indigo-500 text-white shadow-lg transition-transform hover:scale-110 hover:bg-indigo-600"
       style="left: {quickActionX}px; top: {quickActionY}px; width: {quickActionSize}px; height: {quickActionSize}px;"
       onclick={(e) => {
         e.stopPropagation();
@@ -585,41 +637,51 @@
           const state = $inputStateStore;
           // Clean up carriage returns
           let newCode = state.code.replace(/\r\n/g, '\n');
-          
+
           const newNodeId = getNextNodeId(newCode);
-          newCode += `\n  ${newNodeId}[New Node]`;
+          newCode += `\n  ${newNodeId}["New Node"]`;
           newCode += `\n  ${selectedNodeId} --> ${newNodeId}`;
           updateCodeStore({ code: newCode, updateDiagram: true });
         }
-      }}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="60%" height="60%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+      }}>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="60%"
+        height="60%"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line
+        ></svg>
     </button>
   {/if}
 
   {#if hoveredEdgePath}
-    <button 
-      class="edge-pencil-btn absolute z-50 flex items-center justify-center w-6 h-6 bg-white text-indigo-500 rounded-full shadow border border-indigo-200 hover:bg-indigo-50 cursor-pointer"
+    <button
+      class="edge-pencil-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-500 shadow hover:bg-indigo-50"
       style="left: {hoveredEdgeX - 12}px; top: {hoveredEdgeY - 12}px;"
-      onmouseover={() => hoveredEdgePath = hoveredEdgePath}
+      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
       onclick={(e) => {
         e.stopPropagation();
         let sourceId = null;
         let targetId = null;
-        
+
         // Try class names first
-        hoveredEdgePath!.classList.forEach(c => {
+        hoveredEdgePath!.classList.forEach((c) => {
           if (c.startsWith('LS-')) sourceId = c.substring(3);
           if (c.startsWith('LE-')) targetId = c.substring(3);
         });
 
         // Fallback to ID
         if (!sourceId && hoveredEdgePath!.id) {
-           const match = hoveredEdgePath!.id.match(/L[_-](.+?)[_-](.+?)[_-]\d+$/);
-           if (match) {
-              sourceId = match[1];
-              targetId = match[2];
-           }
+          const match = hoveredEdgePath!.id.match(/L[_-](.+?)[_-](.+?)[_-]\d+$/);
+          if (match) {
+            sourceId = match[1];
+            targetId = match[2];
+          }
         }
 
         if (sourceId && targetId) {
@@ -631,21 +693,33 @@
           editH = 30;
           editFontSize = 14;
         } else {
-          console.warn("Could not find source/target for edge:", hoveredEdgePath);
+          console.warn('Could not find source/target for edge:', hoveredEdgePath);
         }
         hoveredEdgePath = null;
-      }}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+      }}>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
     </button>
   {/if}
 
   {#if editingNodeId}
     <textarea
-      class={editingNodeId.startsWith('NEW_EDGE:') 
-        ? "absolute bg-indigo-50/95 text-indigo-950 font-sans border-2 border-indigo-400 focus:ring-4 focus:ring-indigo-500/30 z-[100] rounded-md shadow-xl outline-none resize-none overflow-hidden text-center p-1 flex items-center justify-center leading-tight" 
-        : "absolute bg-transparent text-inherit font-sans focus:ring-0 focus:outline-none z-[100] resize-none overflow-hidden text-center p-0 m-0 leading-tight"}
-      style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(editH, 20)}px; font-size: {editFontSize}px;"
+      class={editingNodeId.startsWith('NEW_EDGE:')
+        ? 'absolute z-[100] flex resize-none items-center justify-center overflow-hidden rounded-md border-2 border-indigo-400 bg-indigo-50/95 p-1 text-center font-sans leading-tight text-indigo-950 shadow-xl outline-none focus:ring-4 focus:ring-indigo-500/30'
+        : 'absolute z-[100] m-0 resize-none overflow-hidden bg-transparent p-0 text-center font-sans leading-tight text-inherit focus:ring-0 focus:outline-none'}
+      style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(
+        editH,
+        20
+      )}px; font-size: {editFontSize}px;"
       bind:value={editText}
       onblur={saveEdit}
       onkeydown={(e) => {
@@ -657,12 +731,20 @@
         }
       }}
       autofocus
-      placeholder={editingNodeId.startsWith('NEW_EDGE:') ? "Edge Label" : ""}
-    ></textarea>
+      placeholder={editingNodeId.startsWith('NEW_EDGE:') ? 'Edge Label' : ''}></textarea>
   {/if}
 </div>
 
 <style>
+  :global(.drag-target rect),
+  :global(.drag-target polygon),
+  :global(.drag-target circle),
+  :global(.drag-target path) {
+    stroke: #22c55e !important;
+    stroke-width: 3px !important;
+    filter: drop-shadow(0 0 10px rgba(34, 197, 94, 0.6)) !important;
+  }
+
   :global(.visual-selected rect),
   :global(.visual-selected polygon),
   :global(.visual-selected circle),

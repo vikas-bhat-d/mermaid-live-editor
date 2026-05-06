@@ -44,6 +44,14 @@ const urlParseFailedState = `flowchart TD
 // inputStateStore handles all updates and is shared externally when exporting via URL, History, etc.
 export const inputStateStore = persist(writable(defaultState), localStorage(), 'codeStore');
 
+// If the persisted code is empty, fall back to the built-in demo example.
+{
+  const _stored = get(inputStateStore);
+  if (!_stored.code || !_stored.code.trim()) {
+    inputStateStore.set({ ..._stored, code: defaultState.code });
+  }
+}
+
 export const currentState: ValidatedState = (() => {
   const state = get(inputStateStore);
   return {
