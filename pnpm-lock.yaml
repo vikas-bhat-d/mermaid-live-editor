@@ -47,6 +47,9 @@ importers:
       '@mermaid-js/mermaid-zenuml':
         specifier: ^0.2.2
         version: 0.2.2(mermaid@11.14.0)
+      '@xyflow/svelte':
+        specifier: ^1.5.2
+        version: 1.5.2(svelte@5.38.6)
       codemirror:
         specifier: ^6.0.1
         version: 6.0.1
@@ -987,6 +990,11 @@ packages:
   '@standard-schema/spec@1.0.0':
     resolution: {integrity: sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA==}
 
+  '@svelte-put/shortcut@4.1.0':
+    resolution: {integrity: sha512-wImNEIkbxAIWFqlfuhcbC+jRPDeRa/uJGIXHMEVVD+jqL9xCwWNnkGQJ6Qb2XVszuRLHlb8SGZDL3Io/h3vs8w==}
+    peerDependencies:
+      svelte: ^5.1.0
+
   '@sveltejs/acorn-typescript@1.0.5':
     resolution: {integrity: sha512-IwQk4yfwLdibDlrXVE04jTZYlLnwsTT2PIOQQGNLWfjavGifnk1JD1LcZjZaBTRcxZu2FfPfNLOE04DSu9lqtQ==}
     peerDependencies:
@@ -1393,6 +1401,14 @@ packages:
 
   '@vue/shared@3.5.13':
     resolution: {integrity: sha512-/hnE/qP5ZoGpol0a5mDi45bOd7t3tjYJBjsgCsivow7D48cJeV5l05RD82lPqi7gRiphZM37rnhW1l6ZoCNNnQ==}
+
+  '@xyflow/svelte@1.5.2':
+    resolution: {integrity: sha512-jPLc2cwRmrkXSv/jvsNDQqTGCsNyTWURKtBl28UCH3BdOAA3CIc0/oQ0EvIcjPdzr0NwvWMgq9TmLdjOIccCEQ==}
+    peerDependencies:
+      svelte: ^5.25.0
+
+  '@xyflow/system@0.0.76':
+    resolution: {integrity: sha512-hvwvnRS1B3REwVDlWexsq7YQaPZeG3/mKo1jv38UmnpWmxihp14bW6VtEOuHEwJX2FvzFw8k77LyKSk/wiZVNA==}
 
   '@zenuml/core@3.36.0':
     resolution: {integrity: sha512-haEUgNrEvAG3Ub8dutKoQk3inReaoYexYoXDWkF0rZebSolgyrMvglrjl5kZzjib43sRkpyq+/kc/BbmWCWr3A==}
@@ -4854,6 +4870,10 @@ snapshots:
 
   '@standard-schema/spec@1.0.0': {}
 
+  '@svelte-put/shortcut@4.1.0(svelte@5.38.6)':
+    dependencies:
+      svelte: 5.38.6
+
   '@sveltejs/acorn-typescript@1.0.5(acorn@8.14.1)':
     dependencies:
       acorn: 8.14.1
@@ -5354,6 +5374,24 @@ snapshots:
 
   '@vue/shared@3.5.13':
     optional: true
+
+  '@xyflow/svelte@1.5.2(svelte@5.38.6)':
+    dependencies:
+      '@svelte-put/shortcut': 4.1.0(svelte@5.38.6)
+      '@xyflow/system': 0.0.76
+      svelte: 5.38.6
+
+  '@xyflow/system@0.0.76':
+    dependencies:
+      '@types/d3-drag': 3.0.7
+      '@types/d3-interpolate': 3.0.4
+      '@types/d3-selection': 3.0.11
+      '@types/d3-transition': 3.0.9
+      '@types/d3-zoom': 3.0.8
+      d3-drag: 3.0.0
+      d3-interpolate: 3.0.1
+      d3-selection: 3.0.0
+      d3-zoom: 3.0.0
 
   '@zenuml/core@3.36.0':
     dependencies:

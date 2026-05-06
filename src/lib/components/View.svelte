@@ -137,7 +137,172 @@
     });
   };
 
+  function getMermaidNodeId(element: Element): string | null {
+    const nodeEl = element.closest('.node');
+    if (!nodeEl) return null;
+    const idAttr = nodeEl.id;
+    if (idAttr) {
+      const parts = idAttr.split('-');
+      if (parts.length >= 3) {
+        return parts.slice(1, -1).join('-');
+      }
+    }
+    return null;
+  }
+
+  let isDragging = $state(false);
+  let dragStartX = $state(0);
+  let dragStartY = $state(0);
+  let dragCurrentX = $state(0);
+  let dragCurrentY = $state(0);
+  let sourceNodeId = $state<string | null>(null);
+
+  let editingNodeId = $state<string | null>(null);
+  let editText = $state<string>('');
+  let editX = $state(0);
+  let editY = $state(0);
+  let editW = $state(0);
+  let editH = $state(0);
+
+  function handleMouseDown(e: MouseEvent) {
+    if (editingNodeId) return;
+    const target = e.target as Element;
+    const nodeId = getMermaidNodeId(target);
+    if (nodeId) {
+      e.stopPropagation(); // Prevent pan-zoom
+      isDragging = true;
+      sourceNodeId = nodeId;
+      const rect = view?.getBoundingClientRect();
+      if (rect) {
+        dragStartX = e.clientX - rect.left;
+        dragStartY = e.clientY - rect.top;
+        dragCurrentX = dragStartX;
+        dragCurrentY = dragStartY;
+      }
+    }
+  }
+
+  function handleMouseMove(e: MouseEvent) {
+    if (isDragging) {
+      e.stopPropagation(); // Prevent pan-zoom dragging
+      const rect = view?.getBoundingClientRect();
+      if (rect) {
+        dragCurrentX = e.clientX - rect.left;
+        dragCurrentY = e.clientY - rect.top;
+      }
+    }
+  }
+
+  function handleMouseUp(e: MouseEvent) {
+    if (isDragging && sourceNodeId) {
+      e.stopPropagation();
+      isDragging = false;
+      const target = e.target as Element;
+      const targetNodeId = getMermaidNodeId(target);
+      if (targetNodeId && targetNodeId !== sourceNodeId) {
+        import('svelte/store').then(({ get }) => {
+          const state = get(inputStateStore);
+          const newCode = state.code + `\n  ${sourceNodeId} --> ${targetNodeId}`;
+          updateCodeStore({ code: newCode, updateDiagram: true });
+        });
+      }
+      sourceNodeId = null;
+    }
+  }
+
+  function handleDoubleClick(e: MouseEvent) {
+    const target = e.target as Element;
+    
+    const edgeLabelEl = target.closest('.edgeLabel');
+    if (edgeLabelEl) {
+      e.stopPropagation(); // Prevent pan-zoom zoom-in
+      const text = (edgeLabelEl as HTMLElement).innerText || '';
+      editingNodeId = `EDGE:${text}`;
+      editText = text.replace(/<br\s*\/?>/g, '\n');
+      const rect = edgeLabelEl.getBoundingClientRect();
+      if (view) {
+        const viewRect = view.getBoundingClientRect();
+        editX = rect.left - viewRect.left;
+        editY = rect.top - viewRect.top;
+        editW = rect.width;
+        editH = rect.height;
+      }
+      return;
+    }
+
+    const nodeEl = target.closest('.node');
+    if (nodeEl) {
+      e.stopPropagation(); // Prevent pan-zoom zoom-in
+      const nodeId = getMermaidNodeId(nodeEl);
+      if (nodeId) {
+        const rect = nodeEl.getBoundingClientRect();
+        const labelEl = nodeEl.querySelector('.nodeLabel, .label');
+        const text = labelEl ? (labelEl as HTMLElement).innerText : '';
+        
+        editingNodeId = nodeId;
+        editText = text.replace(/<br\s*\/?>/g, '\n');
+        
+        if (view) {
+          const viewRect = view.getBoundingClientRect();
+          editX = rect.left - viewRect.left;
+          editY = rect.top - viewRect.top;
+          editW = rect.width;
+          editH = rect.height;
+        }
+      }
+      return;
+    }
+
+    if (target.closest('svg') && !target.closest('.cluster')) {
+      e.stopPropagation();
+      import('svelte/store').then(({ get }) => {
+        const state = get(inputStateStore);
+        const newNodeId = `node${Date.now().toString().slice(-4)}`;
+        const newCode = state.code + `\n  ${newNodeId}[New Node]`;
+        updateCodeStore({ code: newCode, updateDiagram: true });
+      });
+    }
+  }
+
+  function saveEdit() {
+    if (editingNodeId) {
+      import('svelte/store').then(({ get }) => {
+        const state = get(inputStateStore);
+        let newCode = state.code;
+        const textToSave = editText.replace(/\n/g, '<br/>');
+
+        if (editingNodeId!.startsWith('EDGE:')) {
+          const oldText = editingNodeId!.substring(5);
+          if (oldText) {
+            const escapedOldText = oldText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const edgeRegex = new RegExp(`(\\||-)\\s*${escapedOldText}\\s*(\\||->)`, 'g');
+            newCode = newCode.replace(edgeRegex, `$1${textToSave}$2`);
+          }
+        } else {
+          const escapedNodeId = editingNodeId!.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const nodeRegex = new RegExp(`(${escapedNodeId}\\s*[\\[\\(\\{>])([^\\]\\)\\}\\>]+)([\\]\\)\\}\\>])`);
+          const match = newCode.match(nodeRegex);
+          if (match) {
+            newCode = newCode.replace(nodeRegex, `$1${textToSave}$3`);
+          } else {
+            newCode += `\n  ${editingNodeId}[${textToSave}]`;
+          }
+        }
+        
+        updateCodeStore({ code: newCode, updateDiagram: true });
+        editingNodeId = null;
+      });
+    }
+  }
+
   onMount(() => {
+    if (view) {
+      view.addEventListener('mousedown', handleMouseDown, true);
+      view.addEventListener('mousemove', handleMouseMove, true);
+      window.addEventListener('mouseup', handleMouseUp, true);
+      view.addEventListener('dblclick', handleDoubleClick, true);
+    }
+    
     setupPanZoomObserver();
     // Queue state changes to avoid race condition
     let pendingStateChange = Promise.resolve();
@@ -145,6 +310,15 @@
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       pendingStateChange = pendingStateChange.then(() => handleStateChange(state).catch(() => {}));
     });
+
+    return () => {
+      if (view) {
+        view.removeEventListener('mousedown', handleMouseDown, true);
+        view.removeEventListener('mousemove', handleMouseMove, true);
+        window.removeEventListener('mouseup', handleMouseUp, true);
+        view.removeEventListener('dblclick', handleDoubleClick, true);
+      }
+    };
   });
 </script>
 
@@ -153,8 +327,34 @@
 <div
   id="view"
   bind:this={view}
-  class={['h-full w-full', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}>
+  class={['h-full w-full relative', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}
+>
   <div id="container" bind:this={container} class="h-full overflow-auto"></div>
+
+  {#if isDragging}
+    <!-- Absolute overlay for the drag line -->
+    <svg class="absolute top-0 left-0 w-full h-full pointer-events-none z-40">
+      <line x1={dragStartX} y1={dragStartY} x2={dragCurrentX} y2={dragCurrentY} stroke="#3b82f6" stroke-width="3" stroke-dasharray="5,5" />
+    </svg>
+  {/if}
+
+  {#if editingNodeId}
+    <textarea
+      class="absolute bg-white dark:bg-gray-800 text-black dark:text-white border border-blue-500 p-2 z-50 rounded shadow-lg outline-none"
+      style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 120)}px; height: {Math.max(editH, 60)}px;"
+      bind:value={editText}
+      onblur={saveEdit}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          saveEdit();
+        } else if (e.key === 'Escape') {
+          editingNodeId = null;
+        }
+      }}
+      autofocus
+    ></textarea>
+  {/if}
 </div>
 
 <style>
