@@ -64,6 +64,7 @@
   });
 
   let isHistoryOpen = $state(false);
+  let isCodeClosed = $state(false);
 
   let editorPane: Resizable.Pane | undefined;
   $effect(() => {
@@ -83,21 +84,33 @@
       <Resizable.PaneGroup
         direction="horizontal"
         autoSaveId="liveEditor"
-        class="gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0">
-        <Resizable.Pane bind:this={editorPane} defaultSize={30} minSize={15}>
-          <div class="flex h-full flex-col gap-4 sm:gap-6">
-            <Card
-              onselect={tabSelectHandler}
-              isOpen
-              tabs={editorTabs}
-              activeTabID={$stateStore.editorMode}
-              isClosable={false}>
-              <Editor {isMobile} />
-            </Card>
-          </div>
-        </Resizable.Pane>
-        <Resizable.Handle class="mr-1 hidden opacity-0 sm:block" />
+        class="gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0 relative">
+        
+        {#if !isCodeClosed}
+          <Resizable.Pane bind:this={editorPane} defaultSize={20} minSize={10} maxSize={50}>
+            <div class="flex h-full flex-col gap-4 sm:gap-6 pr-2">
+              <Card
+                onselect={tabSelectHandler}
+                isOpen
+                tabs={editorTabs}
+                activeTabID={$stateStore.editorMode}
+                isClosable={false}>
+                <Editor {isMobile} />
+              </Card>
+            </div>
+          </Resizable.Pane>
+          <Resizable.Handle class="w-2 bg-gray-200 hover:bg-gray-300 hidden sm:block cursor-col-resize transition-colors" />
+        {/if}
+        
         <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            class="absolute top-4 left-4 z-[60] bg-white shadow-md border-gray-300 text-gray-700 hover:bg-gray-50 rounded-md font-medium px-3 py-1.5 transition-all" 
+            onclick={() => isCodeClosed = !isCodeClosed}
+          >
+            {isCodeClosed ? 'Show Code' : 'Hide Code'}
+          </Button>
           <View {panZoomState} shouldShowGrid={$stateStore.grid} />
         </Resizable.Pane>
       </Resizable.PaneGroup>

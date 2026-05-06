@@ -34,11 +34,11 @@
   });
 
   $effect(() => {
-    toggleDarkTheme($mode === 'dark');
+    toggleDarkTheme(false);
   });
 </script>
 
-<ModeWatcher />
+<ModeWatcher defaultMode="light" track={false} />
 <Toaster />
 
 <main class="h-dvh">
