@@ -180,6 +180,16 @@
     return stripped || idAttr;
   }
 
+  function getNextNodeId(code: string): string {
+    const matches = [...code.matchAll(/\bn(\d+)\b/g)];
+    let max = 0;
+    for (const match of matches) {
+      const num = parseInt(match[1], 10);
+      if (num > max) max = num;
+    }
+    return `n${max + 1}`;
+  }
+
   let isDragging = $state(false);
   let dragStartX = $state(0);
   let dragStartY = $state(0);
@@ -200,6 +210,10 @@
   let quickActionX = $state(0);
   let quickActionY = $state(0);
   let quickActionSize = $state(28);
+
+  let hoveredEdgePath = $state<Element | null>(null);
+  let hoveredEdgeX = $state(0);
+  let hoveredEdgeY = $state(0);
 
   $effect(() => {
     if (selectedNode && view) {
@@ -265,6 +279,41 @@
   }
 
   function handleMouseMove(e: MouseEvent) {
+    const target = e.target as Element;
+    
+    // Handle Edge Hover Quick Actions
+    if (!isDragging && !editingNodeId) {
+      const pathEl = target.closest('.flowchart-link, path[class*="edge-pattern"]');
+      if (pathEl && !target.closest('.edgeLabel, .node, .quick-action-btn, .edge-pencil-btn')) {
+        if (hoveredEdgePath !== pathEl) {
+          hoveredEdgePath = pathEl;
+          const pathRect = pathEl.getBoundingClientRect();
+          const viewRect = view?.getBoundingClientRect();
+          if (viewRect) {
+            hoveredEdgeX = pathRect.left - viewRect.left + (pathRect.width / 2);
+            hoveredEdgeY = pathRect.top - viewRect.top + (pathRect.height / 2);
+          }
+        }
+      } else if (!target.closest('.edge-pencil-btn')) {
+        // SVG paths are very thin (1px). To prevent the pencil from disappearing 
+        // the moment the mouse slips off the 1px line, we keep the pencil visible 
+        // as long as the mouse is within a 40px magnetic radius of it!
+        if (hoveredEdgePath && view) {
+          const viewRect = view.getBoundingClientRect();
+          const mouseX = e.clientX - viewRect.left;
+          const mouseY = e.clientY - viewRect.top;
+          const dist = Math.hypot(mouseX - hoveredEdgeX, mouseY - hoveredEdgeY);
+          if (dist > 40) {
+            hoveredEdgePath = null;
+          }
+        } else {
+          hoveredEdgePath = null;
+        }
+      }
+    } else {
+      hoveredEdgePath = null;
+    }
+
     if (isDragging) {
       e.stopPropagation(); // Prevent pan-zoom dragging
       const rect = view?.getBoundingClientRect();
@@ -317,8 +366,17 @@
           editY = rect.top - viewRect.top;
           editW = rect.width;
           editH = rect.height;
-          // Approx font size relative to bounding box
-          editFontSize = Math.max(12, rect.height * 0.5);
+          
+          let scale = 1;
+          if (edgeLabelEl instanceof SVGGraphicsElement) {
+             const bbox = edgeLabelEl.getBBox();
+             if (bbox.height > 0) scale = rect.height / bbox.height;
+          } else {
+             // Fallback if not an SVG element
+             scale = rect.height / (edgeLabelEl.clientHeight || 20);
+          }
+          const unscaledFontSize = parseFloat(window.getComputedStyle(edgeLabelEl).fontSize) || 14;
+          editFontSize = unscaledFontSize * scale;
         }
       }
       return;
@@ -341,17 +399,23 @@
           editingLabelEl = labelEl;
           (editingLabelEl as HTMLElement).style.visibility = 'hidden';
           
-          const rect = labelEl.getBoundingClientRect();
+          const nodeRect = nodeEl.getBoundingClientRect();
           if (view) {
             const viewRect = view.getBoundingClientRect();
-            editX = rect.left - viewRect.left;
-            editY = rect.top - viewRect.top;
-            editW = rect.width;
-            editH = rect.height;
-            // Compute a font size relative to the scaled node height.
-            // Text is typically a bit smaller than the node's full height.
-            const nodeRect = nodeEl.getBoundingClientRect();
-            editFontSize = Math.max(12, nodeRect.height * 0.35);
+            // Textbox covers the entire width/height of the node
+            editX = nodeRect.left - viewRect.left;
+            editY = nodeRect.top - viewRect.top;
+            editW = nodeRect.width;
+            editH = nodeRect.height;
+            
+            // Exact scale calculation
+            let scale = 1;
+            if (nodeEl instanceof SVGGraphicsElement) {
+               const bbox = nodeEl.getBBox();
+               if (bbox.height > 0) scale = nodeRect.height / bbox.height;
+            }
+            const unscaledFontSize = parseFloat(window.getComputedStyle(labelEl).fontSize) || 16;
+            editFontSize = unscaledFontSize * scale;
           }
         }
       } else {
@@ -360,12 +424,13 @@
       return;
     }
 
-    if (target.closest('svg') && !target.closest('.cluster')) {
+    if (target.closest('svg') && !target.closest('.cluster') && !target.closest('path') && !target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]')) {
       console.log('[VisualEditor] click fell through to background SVG. Creating new node.');
       e.stopPropagation();
       const state = $inputStateStore;
-      const newNodeId = `node${Date.now().toString().slice(-4)}`;
-      const newCode = state.code + `\n  ${newNodeId}[New Node]`;
+      let newCode = state.code.replace(/\r\n/g, '\n');
+      const newNodeId = getNextNodeId(newCode);
+      newCode += `\n  ${newNodeId}[New Node]`;
       updateCodeStore({ code: newCode, updateDiagram: true });
     }
   }
@@ -402,7 +467,27 @@
       let newCode = state.code;
       const textToSave = editText.replace(/\n/g, '<br/>');
 
-      if (editingNodeId!.startsWith('EDGE:')) {
+      if (editingNodeId!.startsWith('NEW_EDGE:')) {
+        const parts = editingNodeId!.split(':');
+        const sourceId = parts[1];
+        const targetId = parts[2];
+        const regex = new RegExp(`(${sourceId}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)\\s*${targetId})`);
+        const match = newCode.match(regex);
+        if (match && textToSave) {
+          const edgeOpMatch = match[1].match(/(-->|---|-.->|==>|--|==|-\.-)/);
+          if (edgeOpMatch) {
+             const op = edgeOpMatch[1];
+             let newOp = op;
+             if (op === '-->') newOp = `-->|${textToSave}|`;
+             else if (op === '---') newOp = `---|${textToSave}|`;
+             else if (op === '-.->') newOp = `-.->|${textToSave}|`;
+             else if (op === '==>') newOp = `==>|${textToSave}|`;
+             else newOp = `${op}|${textToSave}|`; // Fallback
+             
+             newCode = newCode.replace(match[1], `${sourceId} ${newOp} ${targetId}`);
+          }
+        }
+      } else if (editingNodeId!.startsWith('EDGE:')) {
         const oldText = editingNodeId!.substring(5);
         if (oldText) {
           // Extremely robust string replace for edge lines
@@ -495,11 +580,15 @@
       style="left: {quickActionX}px; top: {quickActionY}px; width: {quickActionSize}px; height: {quickActionSize}px;"
       onclick={(e) => {
         e.stopPropagation();
-        const nodeId = getMermaidNodeId(selectedNode!);
-        if (nodeId) {
+        const selectedNodeId = getMermaidNodeId(selectedNode!);
+        if (selectedNodeId) {
           const state = $inputStateStore;
-          const newNodeId = `node${Date.now().toString().slice(-4)}`;
-          const newCode = state.code + `\n  ${nodeId} --> ${newNodeId}[New Node]`;
+          // Clean up carriage returns
+          let newCode = state.code.replace(/\r\n/g, '\n');
+          
+          const newNodeId = getNextNodeId(newCode);
+          newCode += `\n  ${newNodeId}[New Node]`;
+          newCode += `\n  ${selectedNodeId} --> ${newNodeId}`;
           updateCodeStore({ code: newCode, updateDiagram: true });
         }
       }}
@@ -508,9 +597,54 @@
     </button>
   {/if}
 
+  {#if hoveredEdgePath}
+    <button 
+      class="edge-pencil-btn absolute z-50 flex items-center justify-center w-6 h-6 bg-white text-indigo-500 rounded-full shadow border border-indigo-200 hover:bg-indigo-50 cursor-pointer"
+      style="left: {hoveredEdgeX - 12}px; top: {hoveredEdgeY - 12}px;"
+      onmouseover={() => hoveredEdgePath = hoveredEdgePath}
+      onclick={(e) => {
+        e.stopPropagation();
+        let sourceId = null;
+        let targetId = null;
+        
+        // Try class names first
+        hoveredEdgePath!.classList.forEach(c => {
+          if (c.startsWith('LS-')) sourceId = c.substring(3);
+          if (c.startsWith('LE-')) targetId = c.substring(3);
+        });
+
+        // Fallback to ID
+        if (!sourceId && hoveredEdgePath!.id) {
+           const match = hoveredEdgePath!.id.match(/L[_-](.+?)[_-](.+?)[_-]\d+$/);
+           if (match) {
+              sourceId = match[1];
+              targetId = match[2];
+           }
+        }
+
+        if (sourceId && targetId) {
+          editingNodeId = `NEW_EDGE:${sourceId}:${targetId}`;
+          editText = '';
+          editX = hoveredEdgeX - 40;
+          editY = hoveredEdgeY - 15;
+          editW = 80;
+          editH = 30;
+          editFontSize = 14;
+        } else {
+          console.warn("Could not find source/target for edge:", hoveredEdgePath);
+        }
+        hoveredEdgePath = null;
+      }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+    </button>
+  {/if}
+
   {#if editingNodeId}
     <textarea
-      class="absolute bg-transparent text-inherit font-sans focus:ring-0 focus:outline-none z-[100] resize-none overflow-hidden text-center p-0 m-0 leading-tight"
+      class={editingNodeId.startsWith('NEW_EDGE:') 
+        ? "absolute bg-indigo-50/95 text-indigo-950 font-sans border-2 border-indigo-400 focus:ring-4 focus:ring-indigo-500/30 z-[100] rounded-md shadow-xl outline-none resize-none overflow-hidden text-center p-1 flex items-center justify-center leading-tight" 
+        : "absolute bg-transparent text-inherit font-sans focus:ring-0 focus:outline-none z-[100] resize-none overflow-hidden text-center p-0 m-0 leading-tight"}
       style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(editH, 20)}px; font-size: {editFontSize}px;"
       bind:value={editText}
       onblur={saveEdit}
@@ -523,6 +657,7 @@
         }
       }}
       autofocus
+      placeholder={editingNodeId.startsWith('NEW_EDGE:') ? "Edge Label" : ""}
     ></textarea>
   {/if}
 </div>
