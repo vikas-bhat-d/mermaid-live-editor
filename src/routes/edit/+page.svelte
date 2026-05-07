@@ -79,11 +79,22 @@
   }
 
   let editorPane: Resizable.Pane | undefined;
+
   $effect(() => {
     if (isMobile) {
       editorPane?.resize(50);
     }
   });
+
+  function toggleCode() {
+    if (isCodeClosed) {
+      editorPane?.expand();
+      isCodeClosed = false;
+    } else {
+      editorPane?.collapse();
+      isCodeClosed = true;
+    }
+  }
 </script>
 
 <div class="flex h-full flex-col overflow-hidden">
@@ -93,22 +104,31 @@
         direction="horizontal"
         autoSaveId="liveEditor"
         class="relative gap-4 p-2 pt-0 sm:gap-0 sm:p-6 sm:pt-0">
-        {#if !isCodeClosed}
-          <Resizable.Pane bind:this={editorPane} defaultSize={35} minSize={10} maxSize={60}>
-            <div class="flex h-full flex-col gap-4 pr-2 sm:gap-6">
-              <Card
-                onselect={tabSelectHandler}
-                isOpen
-                tabs={editorTabs}
-                activeTabID={$stateStore.editorMode}
-                isClosable={false}>
-                <Editor {isMobile} />
-              </Card>
-            </div>
-          </Resizable.Pane>
-          <Resizable.Handle
-            class="hidden w-2 cursor-col-resize bg-gray-200 transition-colors hover:bg-gray-300 sm:block" />
-        {/if}
+        <Resizable.Pane
+          bind:this={editorPane}
+          defaultSize={35}
+          minSize={10}
+          maxSize={60}
+          collapsible
+          collapsedSize={0}
+          onCollapse={() => (isCodeClosed = true)}
+          onExpand={() => (isCodeClosed = false)}>
+          <div class="flex h-full flex-col gap-4 pr-2 sm:gap-6">
+            <Card
+              onselect={tabSelectHandler}
+              isOpen
+              tabs={editorTabs}
+              activeTabID={$stateStore.editorMode}
+              isClosable={false}>
+              <Editor {isMobile} />
+            </Card>
+          </div>
+        </Resizable.Pane>
+        <Resizable.Handle
+          class={[
+            'hidden w-2 cursor-col-resize bg-gray-200 transition-colors hover:bg-gray-300 sm:block',
+            isCodeClosed && 'pointer-events-none opacity-0'
+          ]} />
 
         <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
           <div class="absolute top-4 left-4 z-[60] flex gap-2">
@@ -116,7 +136,7 @@
               variant="outline"
               size="sm"
               class="rounded-md border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-700 shadow-md transition-all hover:bg-gray-50"
-              onclick={() => (isCodeClosed = !isCodeClosed)}>
+              onclick={toggleCode}>
               {isCodeClosed ? 'Show Code' : 'Hide Code'}
             </Button>
             <Button

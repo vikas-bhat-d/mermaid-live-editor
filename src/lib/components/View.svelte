@@ -195,6 +195,9 @@
     return `n${max + 1}`;
   }
 
+  // Track Space key so we don't interfere with pan-zoom when the user holds Space to pan
+  let isSpaceDown = false;
+
   let isDragging = $state(false);
   let dragStartX = $state(0);
   let dragStartY = $state(0);
@@ -252,6 +255,7 @@
 
   function handleMouseDown(e: MouseEvent) {
     if (editingNodeId) return;
+    if (isSpaceDown) return; // Space held = pan mode, don't interact with nodes
     const target = e.target as Element;
     console.log('[VisualEditor] MouseDown on target:', target);
 
@@ -367,6 +371,7 @@
   }
 
   function handleDoubleClick(e: MouseEvent) {
+    if (isSpaceDown) return; // Space held = pan mode
     const target = e.target as Element;
     console.log(
       '[VisualEditor] Double click on target:',
@@ -584,6 +589,22 @@
       window.addEventListener('keydown', handleKeyDownGlobal, true);
     }
 
+    // Track Space for pan mode
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.code === 'Space' &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
+        isSpaceDown = true;
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') isSpaceDown = false;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
     setupPanZoomObserver();
     // Queue state changes to avoid race condition
     let pendingStateChange = Promise.resolve();
@@ -600,6 +621,8 @@
         view.removeEventListener('dblclick', handleDoubleClick, true);
         window.removeEventListener('keydown', handleKeyDownGlobal, true);
       }
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
     };
   });
 </script>
