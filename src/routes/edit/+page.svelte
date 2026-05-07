@@ -1,6 +1,7 @@
 <script lang="ts">
   import Card from '$/components/Card/Card.svelte';
   import Editor from '$/components/Editor.svelte';
+  import ExportButtons from '$/components/ExportButtons.svelte';
   import { Button } from '$/components/ui/button';
   import * as Resizable from '$/components/ui/resizable';
   import View from '$/components/View.svelte';
@@ -155,6 +156,9 @@
               disabled={historyIndex >= codeHistory.length - 1}>
               Redo
             </Button>
+          </div>
+          <div class="absolute top-4 right-4 z-[60]">
+            <ExportButtons />
           </div>
           <View {panZoomState} shouldShowGrid={$stateStore.grid} />
         </Resizable.Pane>
