@@ -2,13 +2,9 @@
   import { Button } from '$/components/ui/button';
   import { waitForRender } from '$lib/util/autoSync';
   import { inputStateStore, stateStore } from '$lib/util/state';
-  import { logEvent } from '$lib/util/stats';
-  import { version as FAVersion } from '@fortawesome/fontawesome-free/package.json';
   import dayjs from 'dayjs';
   import { toBase64 } from 'js-base64';
   import DownloadIcon from '~icons/material-symbols/download';
-
-  const FONT_AWESOME_URL = `https://cdnjs.cloudflare.com/ajax/libs/font-awesome/${FAVersion}/css/all.min.css`;
 
   const getFileName = (ext: string) =>
     `mermaid-diagram-${dayjs().format('YYYY-MM-DD-HHmmss')}.${ext}`;
@@ -39,13 +35,11 @@
       .replaceAll('<br>', '<br/>')
       .replaceAll(/<img([^>]*)>/g, (_m, g: string) => `<img ${g} />`);
     return toBase64(`<?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet href="${FONT_AWESOME_URL}" type="text/css"?>
 ${svgString}`);
   };
 
   const onDownloadSVG = () => {
     simulateDownload(getFileName('svg'), `data:image/svg+xml;base64,${getBase64SVG()}`);
-    logEvent('download', { type: 'svg' });
   };
 
   const onDownloadPNG = async () => {
@@ -85,8 +79,6 @@ ${svgString}`);
     setTimeout(() => {
       if (!$inputStateStore.panZoom) $inputStateStore.panZoom = true;
     }, 2000);
-
-    logEvent('download', { type: 'png' });
   };
 
   const onDownloadMMD = () => {
@@ -95,7 +87,6 @@ ${svgString}`);
     const url = URL.createObjectURL(blob);
     simulateDownload(getFileName('mmd'), url);
     setTimeout(() => URL.revokeObjectURL(url), 5000);
-    logEvent('download', { type: 'mmd' });
   };
 
   // Disable export buttons when diagram has an error

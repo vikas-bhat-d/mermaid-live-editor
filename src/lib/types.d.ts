@@ -45,27 +45,14 @@ export interface ValidatedState extends State {
   serialized: string;
 }
 
-export interface GistLoaderConfig {
-  url: string;
-}
-
-export interface LoadingState {
-  loading: boolean;
-  message?: string;
-}
 export interface FileLoaderConfig {
   codeURL: string;
   configURL?: string;
 }
-export type LoaderConfig =
-  | {
-      type: 'gist';
-      config: GistLoaderConfig;
-    }
-  | {
-      type: 'files';
-      config: FileLoaderConfig;
-    };
+export type LoaderConfig = {
+  type: 'files';
+  config: FileLoaderConfig;
+};
 export type HistoryType = 'auto' | 'manual' | 'loader';
 export type HistoryEntry = { id: string; state: State; time: number; url?: string } & (
   | {

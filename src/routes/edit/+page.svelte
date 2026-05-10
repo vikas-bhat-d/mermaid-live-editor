@@ -7,8 +7,7 @@
   import View from '$/components/View.svelte';
   import type { EditorMode, Tab } from '$/types';
   import { PanZoomState } from '$/util/panZoom';
-  import { inputStateStore, stateStore, updateCodeStore } from '$/util/state';
-  import { logEvent } from '$/util/stats';
+  import { freshStartCode, inputStateStore, stateStore, updateCodeStore } from '$/util/state';
   import { initHandler } from '$/util/util';
   import { onMount } from 'svelte';
   import CodeIcon from '~icons/custom/code';
@@ -41,9 +40,10 @@
   let codeHistory = $state<string[]>([]);
   let historyIndex = $state(-1);
   let isNavigatingHistory = false;
+  let showFreshStartModal = $state(false);
 
   const UNDO_STORAGE_KEY = 'codeUndoStack';
-  const MAX_UNDO_STEPS = 200;
+  const MAX_UNDO_STEPS = 100;
 
   function persistUndoStack() {
     try {
@@ -56,10 +56,10 @@
     }
   }
 
-  onMount(async () => {
-    await initHandler();
+  onMount(() => {
+    void initHandler();
     window.addEventListener('appinstalled', () => {
-      logEvent('pwaInstalled', { isMobile });
+      // PWA installed event
     });
 
     // Restore persisted undo stack so Ctrl+Z/Y works after reload.
@@ -142,6 +142,15 @@
     }
   }
 
+  function startFresh() {
+    showFreshStartModal = false;
+    // Clear undo history and reset to fresh start code
+    codeHistory = [freshStartCode];
+    historyIndex = 0;
+    persistUndoStack();
+    updateCodeStore({ code: freshStartCode, updateDiagram: true });
+  }
+
   let editorPane: Resizable.Pane | undefined;
 
   $effect(() => {
@@ -195,7 +204,7 @@
           ]} />
 
         <Resizable.Pane minSize={15} class="relative flex h-full flex-1 flex-col overflow-hidden">
-          <div class="absolute top-4 left-4 z-[60] flex gap-2">
+          <div class="absolute top-4 left-4 z-60 flex gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -219,8 +228,15 @@
               disabled={historyIndex >= codeHistory.length - 1}>
               Redo
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="rounded-md border-red-300 bg-white px-3 py-1.5 font-medium text-red-600 shadow-md transition-all hover:bg-red-50"
+              onclick={() => (showFreshStartModal = true)}>
+              Start Fresh
+            </Button>
           </div>
-          <div class="absolute top-4 right-4 z-[60]">
+          <div class="absolute top-4 right-4 z-60">
             <ExportButtons />
           </div>
           <View {panZoomState} shouldShowGrid={$stateStore.grid} />
@@ -229,3 +245,34 @@
     </div>
   </div>
 </div>
+
+{#if showFreshStartModal}
+  <div
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+    onclick={() => (showFreshStartModal = false)}>
+    <div
+      class="mx-4 max-w-sm rounded-lg bg-white p-6 shadow-lg"
+      onclick={(e) => e.stopPropagation()}>
+      <h2 class="mb-2 text-lg font-bold text-gray-900">Start Fresh?</h2>
+      <p class="mb-6 text-gray-600">
+        This will clear all your work and reset the diagram. All undo/redo history will be lost.
+      </p>
+      <div class="flex justify-end gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          class="rounded-md border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 hover:bg-gray-50"
+          onclick={() => (showFreshStartModal = false)}>
+          Cancel
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="rounded-md border-red-300 bg-red-50 px-4 py-2 font-medium text-red-600 hover:bg-red-100"
+          onclick={startFresh}>
+          Yes, Start Fresh
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}

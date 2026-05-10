@@ -1,11 +1,6 @@
-import type { Loader, State } from '$lib/types';
+import type { State } from '$lib/types';
 import { defaultState, sanitizeConfig, updateCodeStore } from '$lib/util/state';
 import { fetchText } from '$lib/util/util';
-import { loadGistData } from './gist';
-
-const loaders: Record<string, Loader> = {
-  gist: loadGistData
-};
 
 export const loadDataFromUrl = async (): Promise<void> => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -36,18 +31,6 @@ export const loadDataFromUrl = async (): Promise<void> => {
       },
       mermaid: config
     };
-  } else {
-    for (const [key, value] of searchParams.entries()) {
-      if (key in loaders) {
-        try {
-          state = await loaders[key](value);
-          loaded = true;
-          break;
-        } catch (error) {
-          console.error(error);
-        }
-      }
-    }
   }
   if (loaded) {
     state.mermaid = sanitizeConfig(state.mermaid || defaultState.mermaid);

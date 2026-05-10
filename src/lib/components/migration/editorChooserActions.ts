@@ -1,5 +1,4 @@
 import type { EditorChooserVariant } from '$/util/experiments';
-import { logEvent, logMermaidChartClick } from '$/util/stats';
 import { getCheckoutUrl, getMermaidAiLiveUrl } from '$/util/util';
 
 const utmMedium = 'editorSelection';
@@ -35,12 +34,11 @@ export const createEditorChooserActions = (
   close: () => void
 ): EditorChooserActions => {
   const log = (buttonClick: string) => {
-    logEvent('chooseEditor', { buttonClick, variant });
+    // Event logging disabled in offline mode
   };
 
   const startTrial = (buttonClick = 'startTrial') => {
     log(buttonClick);
-    logMermaidChartClick('editorPicker');
     close();
     window.open(
       getCheckoutUrl({

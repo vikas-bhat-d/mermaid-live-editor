@@ -4,8 +4,6 @@
   import { render as renderDiagram } from '$/util/mermaid';
   import { PanZoomState } from '$/util/panZoom';
   import { inputStateStore, stateStore, updateCodeStore } from '$/util/state';
-  import { saveStatistics } from '$/util/stats';
-  import FontAwesome, { mayContainFontAwesome } from '$lib/components/FontAwesome.svelte';
   import uniqueID from 'lodash-es/uniqueId';
   import type { MermaidConfig } from 'mermaid';
   import { mode } from 'mode-watcher';
@@ -24,7 +22,6 @@
   let error = $state(false);
   let panZoom = true;
   let manualUpdate = true;
-  let waitForFontAwesomeToLoad: FontAwesome['waitForFontAwesomeToLoad'] | undefined = $state();
 
   // Set up panZoom state observer to update the store when pan/zoom changes
   const setupPanZoomObserver = () => {
@@ -70,10 +67,6 @@
         config = state.mermaid;
         rough = state.rough;
         panZoom = state.panZoom ?? true;
-
-        if (mayContainFontAwesome(code)) {
-          await waitForFontAwesomeToLoad?.();
-        }
 
         const scroll = view?.parentElement?.scrollTop;
         delete container.dataset.processed;
@@ -247,6 +240,7 @@
   let hoveredEdgeY = $state(0);
   let hoveredEdgeSourceId = $state<string | null>(null);
   let hoveredEdgeTargetId = $state<string | null>(null);
+  let hoveredEdgeIndex = $state<number>(-1);
   let editingEdgeSource: string | null = null;
   let editingEdgeTarget: string | null = null;
 
@@ -329,6 +323,7 @@
           // Extract source/target IDs from path element classes
           hoveredEdgeSourceId = null;
           hoveredEdgeTargetId = null;
+          hoveredEdgeIndex = -1;
           pathEl.classList.forEach((c) => {
             if (c.startsWith('LS-')) hoveredEdgeSourceId = stripMermaidId(c.substring(3));
             if (c.startsWith('LE-')) hoveredEdgeTargetId = stripMermaidId(c.substring(3));
@@ -340,6 +335,7 @@
             const dataMatch = dataId.replace(/^graph-\d+-/, '').match(/^L[_-](.+)[_-](\d+)$/);
             if (dataMatch) {
               const middle = dataMatch[1]; // e.g. "n2_n3" from "L_n2_n3_0"
+              hoveredEdgeIndex = parseInt(dataMatch[2], 10);
               const src = $inputStateStore.code;
               const idExists = (id: string) => {
                 const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -387,12 +383,14 @@
             hoveredEdgePath = null;
             hoveredEdgeSourceId = null;
             hoveredEdgeTargetId = null;
+            hoveredEdgeIndex = -1;
           }
         } else {
           hoveredEdgePath?.classList.remove('edge-hovered');
           hoveredEdgePath = null;
           hoveredEdgeSourceId = null;
           hoveredEdgeTargetId = null;
+          hoveredEdgeIndex = -1;
         }
       }
     } else {
@@ -400,6 +398,7 @@
       hoveredEdgePath = null;
       hoveredEdgeSourceId = null;
       hoveredEdgeTargetId = null;
+      hoveredEdgeIndex = -1;
     }
 
     if (isDragging) {
@@ -555,20 +554,29 @@
     }
   }
 
-  function deleteEdge(sourceId: string, targetId: string) {
+  function deleteEdge(sourceId: string, targetId: string, edgeIndex: number) {
     const state = $inputStateStore;
     const lines = state.code.split('\n');
     const escapedSrc = sourceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedTgt = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Match a line that is purely an edge from sourceId to targetId (with optional label)
     const edgeRegex = new RegExp(
       `^\\s*${escapedSrc}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)[^\\n]*${escapedTgt}\\s*$`
     );
-    const newLines = lines.filter((line) => !edgeRegex.test(line));
+    // Count occurrences and only remove the one at edgeIndex (0-based)
+    let matchCount = -1;
+    const newLines = lines.filter((line) => {
+      if (edgeRegex.test(line)) {
+        matchCount++;
+        // Remove only the Nth matching edge; keep the rest
+        return matchCount !== edgeIndex;
+      }
+      return true;
+    });
     updateCodeStore({ code: newLines.join('\n'), updateDiagram: true });
     hoveredEdgePath = null;
     hoveredEdgeSourceId = null;
     hoveredEdgeTargetId = null;
+    hoveredEdgeIndex = -1;
   }
 
   function reverseEdge(sourceId: string, targetId: string) {
@@ -593,6 +601,7 @@
     hoveredEdgePath = null;
     hoveredEdgeSourceId = null;
     hoveredEdgeTargetId = null;
+    hoveredEdgeIndex = -1;
   }
 
   function saveEdit() {
@@ -605,42 +614,38 @@
         const parts = editingNodeId!.split(':');
         const sourceId = parts[1];
         const targetId = parts[2];
+        const edgeIndex = parts[3] !== undefined ? parseInt(parts[3], 10) : -1;
         const escapedSrc = sourceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const escapedTgt = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(
-          `(${escapedSrc}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)[^\\n]*?)(${escapedTgt})`
+        // Match a single edge line: src OPERATOR optional-|label| tgt
+        const edgeLineRegex = new RegExp(
+          `^(\\s*${escapedSrc}\\s*)(-->|---|-.->|==>|--|==|-\\.-)((\\|[^|]*\\|)?)(\\s*${escapedTgt}\\s*)$`
         );
-        const match = newCode.match(regex);
-        if (match) {
-          const fullEdgeSegment = match[1];
-          const edgeOpMatch = fullEdgeSegment.match(/(-->|---|-.->|==>|--|==|-\.-)/);
-          if (edgeOpMatch) {
-            const op = edgeOpMatch[1];
-            // If empty text submitted, just remove old label
-            if (!textToSave) {
-              // strip any existing |label|
-              newCode = newCode.replace(
-                new RegExp(
-                  `(${escapedSrc}\\s*)(?:-->|---|-.->|==>|--|==|-\\.-)(\\|[^|]*\\|)?(\\s*${escapedTgt})`
-                ),
-                `$1${op}$3`
-              );
-            } else {
-              let newOp: string;
-              if (op === '-->') newOp = `-->|${textToSave}|`;
-              else if (op === '---') newOp = `---|${textToSave}|`;
-              else if (op === '-.->') newOp = `-.->|${textToSave}|`;
-              else if (op === '==>') newOp = `==>|${textToSave}|`;
-              else newOp = `${op}|${textToSave}|`;
-              newCode = newCode.replace(
-                new RegExp(
-                  `(${escapedSrc}\\s*)(?:-->|---|-.->|==>|--|==|-\\.-)(\\|[^|]*\\|)?(\\s*${escapedTgt})`
-                ),
-                `$1${newOp}$3`
-              );
+        // Replace only the Nth matching line (edgeIndex 0-based); -1 = first match
+        const lines = newCode.split('\n');
+        let matchCount = -1;
+        for (let i = 0; i < lines.length; i++) {
+          const m = lines[i].match(edgeLineRegex);
+          if (m) {
+            matchCount++;
+            if (matchCount === edgeIndex || edgeIndex < 0) {
+              const [, pre, op, , , post] = m;
+              if (!textToSave) {
+                lines[i] = `${pre}${op}${post}`;
+              } else {
+                let newOp: string;
+                if (op === '-->') newOp = `-->|${textToSave}|`;
+                else if (op === '---') newOp = `---|${textToSave}|`;
+                else if (op === '-.->') newOp = `-.->|${textToSave}|`;
+                else if (op === '==>') newOp = `==>|${textToSave}|`;
+                else newOp = `${op}|${textToSave}|`;
+                lines[i] = `${pre}${newOp}${post}`;
+              }
+              break;
             }
           }
         }
+        newCode = lines.join('\n');
       } else if (editingNodeId!.startsWith('EDGE:')) {
         const oldText = editingNodeId!.substring(5);
         if (oldText) {
@@ -670,15 +675,47 @@
         // Always quote node labels so special chars like (), {}, [] don't break parsing
         const quotedLabel = `"${textToSave.replace(/"/g, "'")}"`;
         const escapedNodeId = editingNodeId!.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        // Match both quoted ("...") and unquoted labels inside node brackets
-        const nodeRegex = new RegExp(
-          `(${escapedNodeId}\\s*[\\[\\(\\{>])"?([^"\\]\\)\\}\\>]*)"?([\\]\\)\\}\\>])`
-        );
-        const match = newCode.match(nodeRegex);
-        if (match) {
-          newCode = newCode.replace(nodeRegex, `$1${quotedLabel}$3`);
-        } else {
+
+        // Find and replace the node definition line-by-line to handle any content with special chars
+        const lines = newCode.split('\n');
+        let found = false;
+
+        for (let i = 0; i < lines.length && !found; i++) {
+          if (!lines[i].includes(editingNodeId!)) continue;
+
+          // Find the opening bracket right after the node ID
+          const nodeStartIdx = lines[i].indexOf(editingNodeId!);
+          const afterNodeId = lines[i].substring(nodeStartIdx + editingNodeId!.length);
+          const bracketMatch = afterNodeId.match(/^\s*([\[\(\{>])/);
+
+          if (bracketMatch) {
+            const openBracket = bracketMatch[1];
+            const closeBracketMap: Record<string, string> = {
+              '[': ']',
+              '(': ')',
+              '{': '}',
+              '>': '<'
+            };
+            const closeBracket = closeBracketMap[openBracket];
+
+            // Find the closing bracket
+            const contentStart = nodeStartIdx + editingNodeId!.length + bracketMatch[0].length;
+            const closeIdx = lines[i].lastIndexOf(closeBracket);
+
+            if (closeIdx > contentStart) {
+              const before = lines[i].substring(0, contentStart);
+              const after = lines[i].substring(closeIdx);
+              lines[i] = `${before}${quotedLabel}${after}`;
+              found = true;
+            }
+          }
+        }
+
+        if (!found) {
+          // Node doesn't exist; create it
           newCode += `\n  ${editingNodeId}[${quotedLabel}]`;
+        } else {
+          newCode = lines.join('\n');
         }
       }
 
@@ -750,8 +787,6 @@
     };
   });
 </script>
-
-<FontAwesome bind:waitForFontAwesomeToLoad />
 
 <div
   id="view"
@@ -848,7 +883,7 @@
         if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
           editingEdgeSource = hoveredEdgeSourceId;
           editingEdgeTarget = hoveredEdgeTargetId;
-          editingNodeId = `NEW_EDGE:${hoveredEdgeSourceId}:${hoveredEdgeTargetId}`;
+          editingNodeId = `NEW_EDGE:${hoveredEdgeSourceId}:${hoveredEdgeTargetId}:${hoveredEdgeIndex}`;
           editText = '';
           editX = hoveredEdgeX - 40;
           editY = hoveredEdgeY - 15;
@@ -861,6 +896,7 @@
         hoveredEdgePath = null;
         hoveredEdgeSourceId = null;
         hoveredEdgeTargetId = null;
+        hoveredEdgeIndex = -1;
       }}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -885,7 +921,7 @@
       onclick={(e) => {
         e.stopPropagation();
         if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
-          deleteEdge(hoveredEdgeSourceId, hoveredEdgeTargetId);
+          deleteEdge(hoveredEdgeSourceId, hoveredEdgeTargetId, hoveredEdgeIndex);
         }
       }}>
       <svg
@@ -907,8 +943,8 @@
   {#if editingNodeId}
     <textarea
       class={editingNodeId.startsWith('NEW_EDGE:')
-        ? 'absolute z-[100] flex resize-none items-center justify-center overflow-hidden rounded-md border-2 border-indigo-400 bg-indigo-50/95 p-1 text-center font-sans leading-tight text-indigo-950 shadow-xl outline-none focus:ring-4 focus:ring-indigo-500/30'
-        : 'absolute z-[100] m-0 resize-none overflow-hidden bg-transparent p-0 text-center font-sans leading-tight text-inherit focus:ring-0 focus:outline-none'}
+        ? 'absolute z-100 flex resize-none items-center justify-center overflow-hidden rounded-md border-2 border-indigo-400 bg-indigo-50/95 p-1 text-center font-sans leading-tight text-indigo-950 shadow-xl outline-none focus:ring-4 focus:ring-indigo-500/30'
+        : 'absolute z-100 m-0 resize-none overflow-hidden bg-transparent p-0 text-center font-sans leading-tight text-inherit focus:ring-0 focus:outline-none'}
       style="left: {editX}px; top: {editY}px; width: {Math.max(editW, 40)}px; height: {Math.max(
         editH,
         20
@@ -951,6 +987,14 @@
     stroke: #6366f1 !important;
     stroke-width: 3px !important;
     filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5)) !important;
+  }
+
+  /* Readable edge label text */
+  :global(.edgeLabel span),
+  :global(.edgeLabel p),
+  :global(.edgeLabel foreignObject) {
+    font-size: 13px !important;
+    line-height: 1.2 !important;
   }
 
   .grid-bg-light {

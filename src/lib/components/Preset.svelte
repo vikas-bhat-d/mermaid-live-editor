@@ -3,7 +3,6 @@
   import { Button } from '$/components/ui/button';
   import { getSampleDiagrams } from '$/util/mermaid';
   import { updateCode } from '$lib/util/state';
-  import { logEvent } from '$lib/util/stats';
   import ShapesIcon from '~icons/material-symbols/account-tree-outline-rounded';
 
   const extras = {
@@ -39,7 +38,6 @@
       resetPanZoom: true,
       updateDiagram: true
     });
-    logEvent('loadSampleDiagram', { diagramType });
   };
 
   const mainDiagrams = [
@@ -64,7 +62,7 @@
     {#each diagramOrder as sample (sample)}
       <Button
         size="sm"
-        class="w-fit min-w-20 flex-grow normal-case"
+        class="w-fit min-w-20 grow normal-case"
         onclick={() => loadSampleDiagram(sample)}>
         {sample}
       </Button>

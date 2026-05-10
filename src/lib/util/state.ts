@@ -2,7 +2,6 @@ import type { ErrorHash, MarkerData, State, ValidatedState } from '$/types';
 import { debounce, get as lodashGet } from 'lodash-es';
 import type { MermaidConfig } from 'mermaid';
 import { derived, get, writable, type Readable } from 'svelte/store';
-import { env } from './env';
 import {
   extractErrorLineText,
   findMostRelevantLineNumber,
@@ -10,8 +9,8 @@ import {
 } from './errorHandling';
 import { defaultMermaidConfig, parse } from './mermaid';
 import { localStorage, persist } from './persist';
-import { deserializeState, pakoSerde, serializeState } from './serde';
-import { errorDebug, formatJSON, getUTMSource, MCBaseURL } from './util';
+import { deserializeState, serializeState } from './serde';
+import { errorDebug, formatJSON } from './util';
 
 export const defaultState: State = {
   code: `flowchart TD
@@ -31,20 +30,23 @@ export const defaultState: State = {
 };
 
 const urlParseFailedState = `flowchart TD
-    A[Loading URL failed. We can try to figure out why.] -->|Decode JSON| B(Please check the console to see the JSON and error details.)
-    B --> C{Is the JSON correct?}
-    C -->|Yes| D(Please Click here to Raise an issue in github.<br/>Including the broken link in the issue <br/> will speed up the fix.)
-    C -->|No| E{Did someone <br/>send you this link?}
-    E -->|Yes| F[Ask them to send <br/>you the complete link]
-    E -->|No| G{Did you copy <br/> the complete URL?}
-    G --> |Yes| D
-    G --> |"No :("| H(Try using the Timeline tab in History <br/>from same browser you used to create the diagram.)
-    click D href "https://github.com/mermaid-js/mermaid-live-editor/issues/new?assignees=&labels=bug&template=bug_report.md&title=Broken%20link" "Raise issue"`;
+    A[Failed to load diagram] -->|Check console| B(See error details in browser console)
+    B --> C{Did you copy<br/>the complete URL?}
+    C -->|Yes| D[Check if the URL is valid]
+    C --> |No| E(Copy and use<br/>the complete URL)`;
 
 // inputStateStore handles all updates and is shared externally when exporting via URL, History, etc.
 export const inputStateStore = persist(writable(defaultState), localStorage(), 'codeStore');
 
 export const emptyCode = 'flowchart TD\n    ';
+
+export const freshStartCode = `flowchart TD
+    n1["Start"]
+    n2["Process"]
+    n3["End"]
+    n1 --> n2
+    n2 --> n3
+`;
 
 // A code string is only valid if it begins with a recognised Mermaid diagram type keyword.
 const VALID_DIAGRAM_START =
@@ -154,44 +156,13 @@ export const stateStore: Readable<ValidatedState> = derived(
 );
 
 export const urlsStore = derived([stateStore], ([{ code, serialized }]) => {
-  const { krokiRendererUrl, rendererUrl } = env;
-  const png = rendererUrl ? `${rendererUrl}/img/${serialized}?type=png` : '';
   return {
-    kroki: krokiRendererUrl ? `${krokiRendererUrl}/mermaid/svg/${pakoSerde.serialize(code)}` : '',
-    mdCode: png
-      ? `[![](${png})](${window.location.protocol}//${window.location.host}${window.location.pathname}#${serialized})`
-      : '',
-    mermaidChart: ({
-      medium,
-      campaign
-    }: {
-      medium:
-        | 'ai_edit'
-        | 'ai_repair'
-        | 'main_menu'
-        | 'save_diagram'
-        | 'share'
-        | 'vibe_diagramming'
-        | 'visual_edit'
-        | 'voice_edit';
-      campaign?: string;
-    }) => {
-      const utmSource = getUTMSource();
-      const params = new URLSearchParams({
-        utm_source: utmSource,
-        utm_medium: medium,
-        ...(campaign ? { utm_campaign: campaign } : {})
-      }).toString();
-      return {
-        save: `${MCBaseURL}/app/plugin/save?state=${serialized}&${params}`,
-        playground: `${MCBaseURL}/play?${params}#${serialized}`,
-        plugins: `${MCBaseURL}/plugins?${params}`,
-        home: `${MCBaseURL}/?${params}`
-      };
-    },
+    kroki: '',
+    mdCode: '',
+    mermaidChart: (): Record<string, string> => ({}),
     new: `${window.location.protocol}//${window.location.host}${window.location.pathname}#${serializeState(defaultState)}`,
-    png,
-    svg: rendererUrl ? `${rendererUrl}/svg/${serialized}` : '',
+    png: '',
+    svg: '',
     view: `/view#${serialized}`
   };
 });
@@ -204,7 +175,11 @@ export const urlsStore = derived([stateStore], ([{ code, serialized }]) => {
  * @param path - The current path being checked (used for recursion).
  * @returns List of unsafe paths.
  */
-function getUnsafePaths(object: object, unsafeKeys: string[], path: string[] = []) {
+function getUnsafePaths(
+  object: Record<string, unknown>,
+  unsafeKeys: string[],
+  path: string[] = []
+) {
   const unsafePaths = new Array<string[]>();
   for (const key of unsafeKeys) {
     // Copied from mermaid's sanitize function in case there's non-enumerable keys
@@ -222,7 +197,9 @@ function getUnsafePaths(object: object, unsafeKeys: string[], path: string[] = [
       return;
     }
     if (typeof value === 'object' && value !== null) {
-      unsafePaths.push(...getUnsafePaths(value as object, unsafeKeys, currentPath));
+      unsafePaths.push(
+        ...getUnsafePaths(value as Record<string, unknown>, unsafeKeys, currentPath)
+      );
     } else if (
       typeof value === 'string' &&
       // XSS prevention checks -- See mermaid `sanitize` function for reference.
@@ -246,9 +223,11 @@ export const sanitizeConfig = (config: string | MermaidConfig) => {
     typeof config === 'string' ? (JSON.parse(config) as MermaidConfig) : config;
 
   const secureKeys = defaultMermaidConfig.secure ?? [];
-  const unsafePaths = getUnsafePaths(mermaidConfig, secureKeys).filter((path) => {
-    return lodashGet(mermaidConfig, path) !== lodashGet(defaultMermaidConfig, path);
-  });
+  const unsafePaths = getUnsafePaths(mermaidConfig as Record<string, unknown>, secureKeys).filter(
+    (path) => {
+      return lodashGet(mermaidConfig, path) !== lodashGet(defaultMermaidConfig, path);
+    }
+  );
 
   if (
     unsafePaths.length > 0 &&
