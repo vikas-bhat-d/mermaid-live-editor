@@ -185,6 +185,28 @@
     return stripped || idAttr;
   }
 
+  // Strip Mermaid-internal prefixes/suffixes from a raw LS-/LE- class ID so it
+  // matches the actual node ID written in the user's code.
+  function stripMermaidId(rawId: string): string {
+    let id = rawId;
+    let prev;
+    do {
+      prev = id;
+      id = id.replace(/^graph-\d+-/, '');
+      id = id.replace(/^(flowchart|state|class)-/, '');
+    } while (id !== prev);
+
+    const src = $inputStateStore.code;
+    const idExists = (testId: string) => {
+      const esc = testId.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      return new RegExp(`(?:^|\\s)${esc}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`).test(src);
+    };
+
+    if (idExists(id)) return id;
+    const stripped = id.replace(/-\d+$/, '');
+    return idExists(stripped) ? stripped : stripped || id;
+  }
+
   function getNextNodeId(code: string): string {
     const matches = [...code.matchAll(/\bn(\d+)\b/g)];
     let max = 0;
@@ -223,6 +245,10 @@
   let hoveredEdgePath = $state<Element | null>(null);
   let hoveredEdgeX = $state(0);
   let hoveredEdgeY = $state(0);
+  let hoveredEdgeSourceId = $state<string | null>(null);
+  let hoveredEdgeTargetId = $state<string | null>(null);
+  let editingEdgeSource: string | null = null;
+  let editingEdgeTarget: string | null = null;
 
   $effect(() => {
     if (selectedNode && view) {
@@ -259,9 +285,9 @@
     const target = e.target as Element;
     console.log('[VisualEditor] MouseDown on target:', target);
 
-    // Check if clicking the quick action button
-    if (target.closest('.quick-action-btn')) {
-      return; // Handled by its own click listener
+    // Check if clicking the quick action button or edge action buttons
+    if (target.closest('.quick-action-btn') || target.closest('.edge-action-btn')) {
+      return; // Handled by their own click listeners
     }
 
     const nodeId = getMermaidNodeId(target);
@@ -294,9 +320,49 @@
     // Handle Edge Hover Quick Actions
     if (!isDragging && !editingNodeId) {
       const pathEl = target.closest('.flowchart-link, path[class*="edge-pattern"]');
-      if (pathEl && !target.closest('.edgeLabel, .node, .quick-action-btn, .edge-pencil-btn')) {
+      if (pathEl && !target.closest('.edgeLabel, .node, .quick-action-btn, .edge-action-btn')) {
         if (hoveredEdgePath !== pathEl) {
           hoveredEdgePath = pathEl;
+          // Extract source/target IDs from path element classes
+          hoveredEdgeSourceId = null;
+          hoveredEdgeTargetId = null;
+          pathEl.classList.forEach((c) => {
+            if (c.startsWith('LS-')) hoveredEdgeSourceId = stripMermaidId(c.substring(3));
+            if (c.startsWith('LE-')) hoveredEdgeTargetId = stripMermaidId(c.substring(3));
+          });
+          // Fallback: parse data-id or id attribute (Mermaid format: L_sourceId_targetId_index)
+          if (!hoveredEdgeSourceId || !hoveredEdgeTargetId) {
+            const dataId = pathEl.getAttribute('data-id') || pathEl.id || '';
+            // Strip optional "graph-N-" prefix, then match L_<middle>_<index>
+            const dataMatch = dataId.replace(/^graph-\d+-/, '').match(/^L[_-](.+)[_-](\d+)$/);
+            if (dataMatch) {
+              const middle = dataMatch[1]; // e.g. "n2_n3" from "L_n2_n3_0"
+              const src = $inputStateStore.code;
+              const idExists = (id: string) => {
+                const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return new RegExp(`(?:^|\\s)${esc}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`).test(
+                  src
+                );
+              };
+              // Try every possible underscore split: "a_b_c" → try ["a","b_c"], ["a_b","c"]
+              const tokens = middle.split('_');
+              for (let i = 1; i < tokens.length; i++) {
+                const s = tokens.slice(0, i).join('_');
+                const t = tokens.slice(i).join('_');
+                if (idExists(s) && idExists(t)) {
+                  hoveredEdgeSourceId = s;
+                  hoveredEdgeTargetId = t;
+                  break;
+                }
+              }
+            }
+          }
+          console.log(
+            '[VisualEditor] Edge hover IDs:',
+            hoveredEdgeSourceId,
+            '->',
+            hoveredEdgeTargetId
+          );
           const pathRect = pathEl.getBoundingClientRect();
           const viewRect = view?.getBoundingClientRect();
           if (viewRect) {
@@ -304,7 +370,7 @@
             hoveredEdgeY = pathRect.top - viewRect.top + pathRect.height / 2;
           }
         }
-      } else if (!target.closest('.edge-pencil-btn')) {
+      } else if (!target.closest('.edge-action-btn')) {
         // SVG paths are very thin (1px). To prevent the pencil from disappearing
         // the moment the mouse slips off the 1px line, we keep the pencil visible
         // as long as the mouse is within a 40px magnetic radius of it!
@@ -313,15 +379,21 @@
           const mouseX = e.clientX - viewRect.left;
           const mouseY = e.clientY - viewRect.top;
           const dist = Math.hypot(mouseX - hoveredEdgeX, mouseY - hoveredEdgeY);
-          if (dist > 40) {
+          if (dist > 60) {
             hoveredEdgePath = null;
+            hoveredEdgeSourceId = null;
+            hoveredEdgeTargetId = null;
           }
         } else {
           hoveredEdgePath = null;
+          hoveredEdgeSourceId = null;
+          hoveredEdgeTargetId = null;
         }
       }
     } else {
       hoveredEdgePath = null;
+      hoveredEdgeSourceId = null;
+      hoveredEdgeTargetId = null;
     }
 
     if (isDragging) {
@@ -390,6 +462,25 @@
       const text = (edgeLabelEl.textContent || '').trim();
       console.log('[VisualEditor] editing edge with text:', text);
       if (text) {
+        // Try to find associated edge source/target by traversing the SVG DOM
+        let edgeSrcId: string | null = null;
+        let edgeTgtId: string | null = null;
+        let searchParent: Element | null = edgeLabelEl.parentElement;
+        while (searchParent && !edgeSrcId) {
+          const edgePaths = searchParent.querySelectorAll('[class*="LS-"]');
+          edgePaths.forEach((el) => {
+            if (!edgeSrcId) {
+              el.classList.forEach((c) => {
+                if (c.startsWith('LS-')) edgeSrcId = c.substring(3);
+                if (c.startsWith('LE-')) edgeTgtId = c.substring(3);
+              });
+            }
+          });
+          if (!edgeSrcId) searchParent = searchParent.parentElement;
+        }
+        editingEdgeSource = edgeSrcId;
+        editingEdgeTarget = edgeTgtId;
+
         editingNodeId = `EDGE:${text}`;
         editText = text.replace(/<br\s*\/?>/g, '\n');
 
@@ -505,6 +596,46 @@
     }
   }
 
+  function deleteEdge(sourceId: string, targetId: string) {
+    const state = $inputStateStore;
+    const lines = state.code.split('\n');
+    const escapedSrc = sourceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedTgt = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match a line that is purely an edge from sourceId to targetId (with optional label)
+    const edgeRegex = new RegExp(
+      `^\\s*${escapedSrc}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)[^\\n]*${escapedTgt}\\s*$`
+    );
+    const newLines = lines.filter((line) => !edgeRegex.test(line));
+    updateCodeStore({ code: newLines.join('\n'), updateDiagram: true });
+    hoveredEdgePath = null;
+    hoveredEdgeSourceId = null;
+    hoveredEdgeTargetId = null;
+  }
+
+  function reverseEdge(sourceId: string, targetId: string) {
+    const state = $inputStateStore;
+    const lines = state.code.split('\n');
+    const escapedSrc = sourceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedTgt = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (let i = 0; i < lines.length; i++) {
+      // Match: indent src spaces OPERATOR optional-|label| spaces tgt trailing
+      const match = lines[i].match(
+        new RegExp(
+          `^(\\s*)(${escapedSrc})(\\s*)(-->|---|-.->|==>|--|==|-\\.-)((\\|[^|]*\\|)?)(\\s*)(${escapedTgt})(\\s*)$`
+        )
+      );
+      if (match) {
+        const [, indent, , , op, labelPart] = match;
+        lines[i] = `${indent}${targetId} ${op}${labelPart} ${sourceId}`;
+        break;
+      }
+    }
+    updateCodeStore({ code: lines.join('\n'), updateDiagram: true });
+    hoveredEdgePath = null;
+    hoveredEdgeSourceId = null;
+    hoveredEdgeTargetId = null;
+  }
+
   function saveEdit() {
     if (editingNodeId) {
       const state = $inputStateStore;
@@ -515,33 +646,63 @@
         const parts = editingNodeId!.split(':');
         const sourceId = parts[1];
         const targetId = parts[2];
+        const escapedSrc = sourceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const escapedTgt = targetId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(
-          `(${sourceId}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)\\s*${targetId})`
+          `(${escapedSrc}\\s*(?:-->|---|-.->|==>|--|==|-\\.-)[^\\n]*?)(${escapedTgt})`
         );
         const match = newCode.match(regex);
-        if (match && textToSave) {
-          const edgeOpMatch = match[1].match(/(-->|---|-.->|==>|--|==|-\.-)/);
+        if (match) {
+          const fullEdgeSegment = match[1];
+          const edgeOpMatch = fullEdgeSegment.match(/(-->|---|-.->|==>|--|==|-\.-)/);
           if (edgeOpMatch) {
             const op = edgeOpMatch[1];
-            let newOp = op;
-            if (op === '-->') newOp = `-->|${textToSave}|`;
-            else if (op === '---') newOp = `---|${textToSave}|`;
-            else if (op === '-.->') newOp = `-.->|${textToSave}|`;
-            else if (op === '==>') newOp = `==>|${textToSave}|`;
-            else newOp = `${op}|${textToSave}|`; // Fallback
-
-            newCode = newCode.replace(match[1], `${sourceId} ${newOp} ${targetId}`);
+            // If empty text submitted, just remove old label
+            if (!textToSave) {
+              // strip any existing |label|
+              newCode = newCode.replace(
+                new RegExp(
+                  `(${escapedSrc}\\s*)(?:-->|---|-.->|==>|--|==|-\\.-)(\\|[^|]*\\|)?(\\s*${escapedTgt})`
+                ),
+                `$1${op}$3`
+              );
+            } else {
+              let newOp: string;
+              if (op === '-->') newOp = `-->|${textToSave}|`;
+              else if (op === '---') newOp = `---|${textToSave}|`;
+              else if (op === '-.->') newOp = `-.->|${textToSave}|`;
+              else if (op === '==>') newOp = `==>|${textToSave}|`;
+              else newOp = `${op}|${textToSave}|`;
+              newCode = newCode.replace(
+                new RegExp(
+                  `(${escapedSrc}\\s*)(?:-->|---|-.->|==>|--|==|-\\.-)(\\|[^|]*\\|)?(\\s*${escapedTgt})`
+                ),
+                `$1${newOp}$3`
+              );
+            }
           }
         }
       } else if (editingNodeId!.startsWith('EDGE:')) {
         const oldText = editingNodeId!.substring(5);
         if (oldText) {
-          // Extremely robust string replace for edge lines
           const lines = newCode.split('\n');
+          const escapedOldText = oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const labelPattern = new RegExp(`\\|${escapedOldText}\\|`);
           for (let i = 0; i < lines.length; i++) {
-            // Check if line looks like an edge connection and contains the old text
-            if (lines[i].includes(oldText) && lines[i].match(/-->|---|-.->|==>|--|==|-\.-/)) {
+            if (!lines[i].match(/-->|---|-.->|==>|--|==|-\.-/)) continue;
+            // If we know the directed source→target, verify this is the correct edge
+            if (editingEdgeSource && editingEdgeTarget) {
+              const escapedSrc = editingEdgeSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const escapedTgt = editingEdgeTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const directedRegex = new RegExp(`${escapedSrc}[^\\n]*${escapedTgt}`);
+              if (!directedRegex.test(lines[i])) continue;
+            }
+            if (labelPattern.test(lines[i])) {
+              lines[i] = lines[i].replace(labelPattern, `|${textToSave}|`);
+              break;
+            } else if (lines[i].includes(oldText)) {
               lines[i] = lines[i].replace(oldText, textToSave);
+              break;
             }
           }
           newCode = lines.join('\n');
@@ -569,6 +730,8 @@
 
       updateCodeStore({ code: newCode, updateDiagram: true });
       editingNodeId = null;
+      editingEdgeSource = null;
+      editingEdgeTarget = null;
     }
   }
 
@@ -578,6 +741,8 @@
       editingLabelEl = null;
     }
     editingNodeId = null;
+    editingEdgeSource = null;
+    editingEdgeTarget = null;
   }
 
   onMount(() => {
@@ -683,32 +848,48 @@
   {/if}
 
   {#if hoveredEdgePath}
+    <!-- Reverse direction button -->
     <button
-      class="edge-pencil-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-500 shadow hover:bg-indigo-50"
-      style="left: {hoveredEdgeX - 12}px; top: {hoveredEdgeY - 12}px;"
+      class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 shadow hover:bg-slate-50"
+      style="left: {hoveredEdgeX - 40}px; top: {hoveredEdgeY - 12}px;"
+      title="Reverse direction"
+      aria-label="Reverse edge direction"
       onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
+      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
       onclick={(e) => {
         e.stopPropagation();
-        let sourceId = null;
-        let targetId = null;
-
-        // Try class names first
-        hoveredEdgePath!.classList.forEach((c) => {
-          if (c.startsWith('LS-')) sourceId = c.substring(3);
-          if (c.startsWith('LE-')) targetId = c.substring(3);
-        });
-
-        // Fallback to ID
-        if (!sourceId && hoveredEdgePath!.id) {
-          const match = hoveredEdgePath!.id.match(/L[_-](.+?)[_-](.+?)[_-]\d+$/);
-          if (match) {
-            sourceId = match[1];
-            targetId = match[2];
-          }
+        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
+          reverseEdge(hoveredEdgeSourceId, hoveredEdgeTargetId);
         }
-
-        if (sourceId && targetId) {
-          editingNodeId = `NEW_EDGE:${sourceId}:${targetId}`;
+      }}>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path
+        ><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path
+        ></svg>
+    </button>
+    <!-- Edit label button -->
+    <button
+      class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-500 shadow hover:bg-indigo-50"
+      style="left: {hoveredEdgeX - 12}px; top: {hoveredEdgeY - 12}px;"
+      title="Edit label"
+      aria-label="Edit edge label"
+      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
+      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
+      onclick={(e) => {
+        e.stopPropagation();
+        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
+          editingEdgeSource = hoveredEdgeSourceId;
+          editingEdgeTarget = hoveredEdgeTargetId;
+          editingNodeId = `NEW_EDGE:${hoveredEdgeSourceId}:${hoveredEdgeTargetId}`;
           editText = '';
           editX = hoveredEdgeX - 40;
           editY = hoveredEdgeY - 15;
@@ -719,6 +900,8 @@
           console.warn('Could not find source/target for edge:', hoveredEdgePath);
         }
         hoveredEdgePath = null;
+        hoveredEdgeSourceId = null;
+        hoveredEdgeTargetId = null;
       }}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -731,6 +914,34 @@
         stroke-linecap="round"
         stroke-linejoin="round"
         ><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+    </button>
+    <!-- Delete edge button -->
+    <button
+      class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-red-200 bg-white text-red-400 shadow hover:bg-red-50"
+      style="left: {hoveredEdgeX + 16}px; top: {hoveredEdgeY - 12}px;"
+      title="Delete edge"
+      aria-label="Delete edge"
+      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
+      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
+      onclick={(e) => {
+        e.stopPropagation();
+        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
+          deleteEdge(hoveredEdgeSourceId, hoveredEdgeTargetId);
+        }
+      }}>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        ><polyline points="3 6 5 6 21 6"></polyline><path
+          d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path
+        ><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4h6v2"></path></svg>
     </button>
   {/if}
 
