@@ -60,7 +60,29 @@
       }
     });
 
-    return () => unsubscribe();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      // Let Monaco handle undo/redo when the code editor textarea is focused.
+      const active = document.activeElement;
+      if (
+        active &&
+        (active.tagName === 'TEXTAREA' || (active as HTMLElement).closest?.('.monaco-editor'))
+      )
+        return;
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('keydown', onKeyDown);
+    };
   });
 
   function undo() {

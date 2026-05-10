@@ -322,7 +322,10 @@
       const pathEl = target.closest('.flowchart-link, path[class*="edge-pattern"]');
       if (pathEl && !target.closest('.edgeLabel, .node, .quick-action-btn, .edge-action-btn')) {
         if (hoveredEdgePath !== pathEl) {
+          // Remove glow from previous edge
+          if (hoveredEdgePath) hoveredEdgePath.classList.remove('edge-hovered');
           hoveredEdgePath = pathEl;
+          hoveredEdgePath.classList.add('edge-hovered');
           // Extract source/target IDs from path element classes
           hoveredEdgeSourceId = null;
           hoveredEdgeTargetId = null;
@@ -380,17 +383,20 @@
           const mouseY = e.clientY - viewRect.top;
           const dist = Math.hypot(mouseX - hoveredEdgeX, mouseY - hoveredEdgeY);
           if (dist > 60) {
+            hoveredEdgePath.classList.remove('edge-hovered');
             hoveredEdgePath = null;
             hoveredEdgeSourceId = null;
             hoveredEdgeTargetId = null;
           }
         } else {
+          hoveredEdgePath?.classList.remove('edge-hovered');
           hoveredEdgePath = null;
           hoveredEdgeSourceId = null;
           hoveredEdgeTargetId = null;
         }
       }
     } else {
+      hoveredEdgePath?.classList.remove('edge-hovered');
       hoveredEdgePath = null;
       hoveredEdgeSourceId = null;
       hoveredEdgeTargetId = null;
@@ -456,57 +462,10 @@
 
     // Strict edge selector to prevent matching the whole graph
     const edgeLabelEl = target.closest('.edgeLabel, .edge-label, [class*="edgeLabel"]');
-    // Ensure it's not actually a node label
+    // Ensure it's not actually a node label — double-click on edge label does nothing;
+    // use the hover toolbar pencil button to edit.
     if (edgeLabelEl && !target.closest('.node')) {
-      e.stopPropagation(); // Prevent pan-zoom zoom-in
-      const text = (edgeLabelEl.textContent || '').trim();
-      console.log('[VisualEditor] editing edge with text:', text);
-      if (text) {
-        // Try to find associated edge source/target by traversing the SVG DOM
-        let edgeSrcId: string | null = null;
-        let edgeTgtId: string | null = null;
-        let searchParent: Element | null = edgeLabelEl.parentElement;
-        while (searchParent && !edgeSrcId) {
-          const edgePaths = searchParent.querySelectorAll('[class*="LS-"]');
-          edgePaths.forEach((el) => {
-            if (!edgeSrcId) {
-              el.classList.forEach((c) => {
-                if (c.startsWith('LS-')) edgeSrcId = c.substring(3);
-                if (c.startsWith('LE-')) edgeTgtId = c.substring(3);
-              });
-            }
-          });
-          if (!edgeSrcId) searchParent = searchParent.parentElement;
-        }
-        editingEdgeSource = edgeSrcId;
-        editingEdgeTarget = edgeTgtId;
-
-        editingNodeId = `EDGE:${text}`;
-        editText = text.replace(/<br\s*\/?>/g, '\n');
-
-        editingLabelEl = edgeLabelEl;
-        (editingLabelEl as HTMLElement).style.visibility = 'hidden';
-
-        const rect = edgeLabelEl.getBoundingClientRect();
-        if (view) {
-          const viewRect = view.getBoundingClientRect();
-          editX = rect.left - viewRect.left;
-          editY = rect.top - viewRect.top;
-          editW = rect.width;
-          editH = rect.height;
-
-          let scale = 1;
-          if (edgeLabelEl instanceof SVGGraphicsElement) {
-            const bbox = edgeLabelEl.getBBox();
-            if (bbox.height > 0) scale = rect.height / bbox.height;
-          } else {
-            // Fallback if not an SVG element
-            scale = rect.height / (edgeLabelEl.clientHeight || 20);
-          }
-          const unscaledFontSize = parseFloat(window.getComputedStyle(edgeLabelEl).fontSize) || 14;
-          editFontSize = unscaledFontSize * scale;
-        }
-      }
+      e.stopPropagation();
       return;
     }
 
@@ -986,6 +945,12 @@
     stroke: #6366f1 !important;
     stroke-width: 3px !important;
     filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.4)) !important;
+  }
+
+  :global(.edge-hovered) {
+    stroke: #6366f1 !important;
+    stroke-width: 3px !important;
+    filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5)) !important;
   }
 
   .grid-bg-light {

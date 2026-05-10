@@ -89,11 +89,28 @@ ${svgString}`);
     logEvent('download', { type: 'png' });
   };
 
+  const onDownloadMMD = () => {
+    const code = $inputStateStore.code ?? '';
+    const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    simulateDownload(getFileName('mmd'), url);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    logEvent('download', { type: 'mmd' });
+  };
+
   // Disable export buttons when diagram has an error
   const hasError = $derived(!!$stateStore.error);
 </script>
 
 <div class="flex gap-1.5">
+  <Button
+    variant="outline"
+    size="sm"
+    class="flex items-center gap-1.5 rounded-md border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-700 shadow-md transition-all hover:bg-gray-50"
+    onclick={onDownloadMMD}>
+    <DownloadIcon class="size-3.5" />
+    MMD
+  </Button>
   <Button
     variant="outline"
     size="sm"

@@ -44,13 +44,30 @@ const urlParseFailedState = `flowchart TD
 // inputStateStore handles all updates and is shared externally when exporting via URL, History, etc.
 export const inputStateStore = persist(writable(defaultState), localStorage(), 'codeStore');
 
-// If the persisted code is empty, fall back to the built-in demo example.
+export const emptyCode = 'flowchart TD\n    ';
+
+// A code string is only valid if it begins with a recognised Mermaid diagram type keyword.
+const VALID_DIAGRAM_START =
+  /^\s*(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|mindmap|timeline|gitGraph|C4Context|quadrantChart|xychart-beta|block-beta|architecture-beta|packet-beta|kanban|zenuml|requirement)\b/i;
+
+function isCodeValid(code: string): boolean {
+  return !!code && VALID_DIAGRAM_START.test(code);
+}
+
+// On load: if persisted code is blank or invalid, restore the minimal starter.
 {
   const _stored = get(inputStateStore);
-  if (!_stored.code || !_stored.code.trim()) {
-    inputStateStore.set({ ..._stored, code: defaultState.code });
+  if (!isCodeValid(_stored.code)) {
+    inputStateStore.set({ ..._stored, code: emptyCode });
   }
 }
+
+// At runtime: whenever code becomes blank/invalid, restore the minimal starter.
+inputStateStore.subscribe((state) => {
+  if (!isCodeValid(state.code)) {
+    inputStateStore.set({ ...state, code: emptyCode });
+  }
+});
 
 export const currentState: ValidatedState = (() => {
   const state = get(inputStateStore);
