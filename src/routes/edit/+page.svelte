@@ -42,11 +42,44 @@
   let historyIndex = $state(-1);
   let isNavigatingHistory = false;
 
+  const UNDO_STORAGE_KEY = 'codeUndoStack';
+  const MAX_UNDO_STEPS = 200;
+
+  function persistUndoStack() {
+    try {
+      localStorage.setItem(
+        UNDO_STORAGE_KEY,
+        JSON.stringify({ history: codeHistory, index: historyIndex })
+      );
+    } catch {
+      // localStorage full or unavailable — silently ignore
+    }
+  }
+
   onMount(async () => {
     await initHandler();
     window.addEventListener('appinstalled', () => {
       logEvent('pwaInstalled', { isMobile });
     });
+
+    // Restore persisted undo stack so Ctrl+Z/Y works after reload.
+    try {
+      const saved = localStorage.getItem(UNDO_STORAGE_KEY);
+      if (saved) {
+        const { history, index } = JSON.parse(saved) as { history: string[]; index: number };
+        if (
+          Array.isArray(history) &&
+          typeof index === 'number' &&
+          index >= 0 &&
+          index < history.length
+        ) {
+          codeHistory = history;
+          historyIndex = index;
+        }
+      }
+    } catch {
+      // Corrupted data — start fresh
+    }
 
     const unsubscribe = inputStateStore.subscribe((state) => {
       if (isNavigatingHistory) {
@@ -57,6 +90,12 @@
         codeHistory = codeHistory.slice(0, historyIndex + 1);
         codeHistory.push(state.code);
         historyIndex++;
+        // Cap to avoid unbounded localStorage growth
+        if (codeHistory.length > MAX_UNDO_STEPS) {
+          codeHistory = codeHistory.slice(codeHistory.length - MAX_UNDO_STEPS);
+          historyIndex = codeHistory.length - 1;
+        }
+        persistUndoStack();
       }
     });
 
@@ -90,6 +129,7 @@
       historyIndex--;
       isNavigatingHistory = true;
       updateCodeStore({ code: codeHistory[historyIndex], updateDiagram: true });
+      persistUndoStack();
     }
   }
 
@@ -98,6 +138,7 @@
       historyIndex++;
       isNavigatingHistory = true;
       updateCodeStore({ code: codeHistory[historyIndex], updateDiagram: true });
+      persistUndoStack();
     }
   }
 
