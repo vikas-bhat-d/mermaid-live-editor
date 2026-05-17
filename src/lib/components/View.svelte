@@ -213,7 +213,7 @@
   }
 
   // Track Space key so we don't interfere with pan-zoom when the user holds Space to pan
-  let isSpaceDown = false;
+  let isSpaceDown = $state(false);
 
   let isDragging = $state(false);
   let dragStartX = $state(0);
