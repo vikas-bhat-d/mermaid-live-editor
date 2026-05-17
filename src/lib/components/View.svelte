@@ -111,6 +111,8 @@
           if (state.panZoom) {
             handlePanZoom(state, graphDiv);
           }
+          // Inject wider transparent hit-area paths over edges for easier interaction
+          injectEdgeHitAreas(graphDiv);
         }
         if (view?.parentElement && scroll) {
           view.parentElement.scrollTop = scroll;
@@ -236,13 +238,58 @@
   let quickActionSize = $state(28);
 
   let hoveredEdgePath = $state<Element | null>(null);
-  let hoveredEdgeX = $state(0);
-  let hoveredEdgeY = $state(0);
   let hoveredEdgeSourceId = $state<string | null>(null);
   let hoveredEdgeTargetId = $state<string | null>(null);
   let hoveredEdgeIndex = $state<number>(-1);
+
+  // Selected edge — persists on click; toolbar anchors to the click position
+  let selectedEdgePath = $state<Element | null>(null);
+  let selectedEdgeX = $state(0);
+  let selectedEdgeY = $state(0);
+  let selectedEdgeSourceId = $state<string | null>(null);
+  let selectedEdgeTargetId = $state<string | null>(null);
+  let selectedEdgeIndex = $state<number>(-1);
+
   let editingEdgeSource: string | null = null;
   let editingEdgeTarget: string | null = null;
+
+  // Maps each transparent hit-area path → the actual visible edge path it overlays
+  let edgeHitAreaMap = new WeakMap<Element, Element>();
+
+  /** After an SVG render, inject wide transparent paths over every edge for easier hit-testing. */
+  function injectEdgeHitAreas(svgEl: SVGSVGElement) {
+    edgeHitAreaMap = new WeakMap();
+    const edgePaths = svgEl.querySelectorAll<SVGPathElement>(
+      '.flowchart-link, path[class*="edge-pattern"]'
+    );
+    console.log('[injectEdgeHitAreas] Found', edgePaths.length, 'edge paths');
+    edgePaths.forEach((path, idx) => {
+      // Skip if we already injected a hit area for this path
+      if (path.nextElementSibling?.classList.contains('edge-hit-area')) {
+        console.log('[injectEdgeHitAreas] Skipping path', idx, 'already has hit area');
+        return;
+      }
+      const hitArea = path.cloneNode(false) as SVGPathElement;
+      hitArea.removeAttribute('id');
+      hitArea.removeAttribute('marker-end');
+      hitArea.removeAttribute('marker-start');
+      hitArea.removeAttribute('marker-mid');
+      hitArea.classList.add('edge-hit-area');
+      // hitArea.setAttribute('stroke', 'blue'); managed in css
+      hitArea.setAttribute('fill', 'none');
+      // hitArea.setAttribute('stroke-width', '50'); already managed in csss
+      hitArea.setAttribute('pointer-events', 'stroke');
+      path.parentNode?.insertBefore(hitArea, path.nextSibling);
+      edgeHitAreaMap.set(hitArea, path);
+      console.log('[injectEdgeHitAreas] Injected hit area for path', idx);
+    });
+    console.log('[injectEdgeHitAreas] Total hit areas injected:', edgePaths.length);
+  }
+
+  /** Return the real edge path for a given element (resolves hit-area → actual path). */
+  function resolveEdgePath(el: Element): Element {
+    return edgeHitAreaMap.get(el) ?? el;
+  }
 
   $effect(() => {
     if (selectedNode && view) {
@@ -273,6 +320,55 @@
     }
   }
 
+  function clearEdgeSelection() {
+    if (selectedEdgePath) {
+      selectedEdgePath.classList.remove('edge-selected');
+      selectedEdgePath = null;
+      selectedEdgeSourceId = null;
+      selectedEdgeTargetId = null;
+      selectedEdgeIndex = -1;
+    }
+  }
+
+  /** Extract source/target node IDs and edge index from an SVG path element. */
+  function extractEdgeIds(pathEl: Element): {
+    sourceId: string | null;
+    targetId: string | null;
+    index: number;
+  } {
+    let sourceId: string | null = null;
+    let targetId: string | null = null;
+    let index = -1;
+    pathEl.classList.forEach((c) => {
+      if (c.startsWith('LS-')) sourceId = stripMermaidId(c.substring(3));
+      if (c.startsWith('LE-')) targetId = stripMermaidId(c.substring(3));
+    });
+    if (!sourceId || !targetId) {
+      const dataId = pathEl.getAttribute('data-id') || pathEl.id || '';
+      const dataMatch = dataId.replace(/^graph-\d+-/, '').match(/^L[_-](.+)[_-](\d+)$/);
+      if (dataMatch) {
+        const middle = dataMatch[1];
+        index = parseInt(dataMatch[2], 10);
+        const src = $inputStateStore.code;
+        const idExists = (id: string) => {
+          const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp(`(?:^|\\s)${esc}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`).test(src);
+        };
+        const tokens = middle.split('_');
+        for (let i = 1; i < tokens.length; i++) {
+          const s = tokens.slice(0, i).join('_');
+          const t = tokens.slice(i).join('_');
+          if (idExists(s) && idExists(t)) {
+            sourceId = s;
+            targetId = t;
+            break;
+          }
+        }
+      }
+    }
+    return { sourceId, targetId, index };
+  }
+
   function handleMouseDown(e: MouseEvent) {
     if (editingNodeId) return;
     if (isSpaceDown) return; // Space held = pan mode, don't interact with nodes
@@ -286,6 +382,7 @@
 
     const nodeId = getMermaidNodeId(target);
     if (nodeId) {
+      clearEdgeSelection();
       clearSelection();
       selectedNode = target.closest('.node');
       if (selectedNode) {
@@ -304,94 +401,75 @@
         dragCurrentY = dragStartY;
       }
     } else {
-      clearSelection();
+      // Check if clicking on an edge path (including wide hit areas) — select it
+      const rawEdgeEl = target.closest(
+        '.flowchart-link, path[class*="edge-pattern"], .edge-hit-area'
+      );
+      console.log(
+        '[handleMouseDown] rawEdgeEl from closest:',
+        rawEdgeEl?.tagName,
+        rawEdgeEl?.className
+      );
+      if (rawEdgeEl && !target.closest('.edgeLabel, .node')) {
+        const edgePath = resolveEdgePath(rawEdgeEl);
+        console.log('[handleMouseDown] Resolved edge path:', edgePath?.tagName);
+        clearSelection();
+        clearEdgeSelection();
+
+        selectedEdgePath = edgePath;
+        selectedEdgePath.classList.add('edge-selected');
+
+        const ids = extractEdgeIds(edgePath);
+        selectedEdgeSourceId = ids.sourceId;
+        selectedEdgeTargetId = ids.targetId;
+        selectedEdgeIndex = ids.index;
+
+        const viewRect = view?.getBoundingClientRect();
+        if (viewRect) {
+          selectedEdgeX = e.clientX - viewRect.left;
+          selectedEdgeY = e.clientY - viewRect.top;
+        }
+
+        e.stopPropagation();
+      } else {
+        clearEdgeSelection();
+        clearSelection();
+      }
     }
   }
 
   function handleMouseMove(e: MouseEvent) {
     const target = e.target as Element;
 
-    // Handle Edge Hover Quick Actions
+    // Handle Edge Hover (glow only — toolbar appears on click via selectedEdgePath)
     if (!isDragging && !editingNodeId) {
-      const pathEl = target.closest('.flowchart-link, path[class*="edge-pattern"]');
+      const rawEl = target.closest('.flowchart-link, path[class*="edge-pattern"], .edge-hit-area');
+      console.log('[handleMouseMove] rawEl:', rawEl?.tagName, rawEl?.className);
+      const pathEl = rawEl ? resolveEdgePath(rawEl) : null;
+      console.log('[handleMouseMove] pathEl:', pathEl?.tagName);
       if (pathEl && !target.closest('.edgeLabel, .node, .quick-action-btn, .edge-action-btn')) {
         if (hoveredEdgePath !== pathEl) {
           // Remove glow from previous edge
           if (hoveredEdgePath) hoveredEdgePath.classList.remove('edge-hovered');
           hoveredEdgePath = pathEl;
           hoveredEdgePath.classList.add('edge-hovered');
-          // Extract source/target IDs from path element classes
-          hoveredEdgeSourceId = null;
-          hoveredEdgeTargetId = null;
-          hoveredEdgeIndex = -1;
-          pathEl.classList.forEach((c) => {
-            if (c.startsWith('LS-')) hoveredEdgeSourceId = stripMermaidId(c.substring(3));
-            if (c.startsWith('LE-')) hoveredEdgeTargetId = stripMermaidId(c.substring(3));
-          });
-          // Fallback: parse data-id or id attribute (Mermaid format: L_sourceId_targetId_index)
-          if (!hoveredEdgeSourceId || !hoveredEdgeTargetId) {
-            const dataId = pathEl.getAttribute('data-id') || pathEl.id || '';
-            // Strip optional "graph-N-" prefix, then match L_<middle>_<index>
-            const dataMatch = dataId.replace(/^graph-\d+-/, '').match(/^L[_-](.+)[_-](\d+)$/);
-            if (dataMatch) {
-              const middle = dataMatch[1]; // e.g. "n2_n3" from "L_n2_n3_0"
-              hoveredEdgeIndex = parseInt(dataMatch[2], 10);
-              const src = $inputStateStore.code;
-              const idExists = (id: string) => {
-                const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                return new RegExp(`(?:^|\\s)${esc}(?:\\s*[\\[\\(\\{>]|\\s*-->|\\s*---|$)`).test(
-                  src
-                );
-              };
-              // Try every possible underscore split: "a_b_c" → try ["a","b_c"], ["a_b","c"]
-              const tokens = middle.split('_');
-              for (let i = 1; i < tokens.length; i++) {
-                const s = tokens.slice(0, i).join('_');
-                const t = tokens.slice(i).join('_');
-                if (idExists(s) && idExists(t)) {
-                  hoveredEdgeSourceId = s;
-                  hoveredEdgeTargetId = t;
-                  break;
-                }
-              }
-            }
-          }
+          const ids = extractEdgeIds(pathEl);
+          hoveredEdgeSourceId = ids.sourceId;
+          hoveredEdgeTargetId = ids.targetId;
+          hoveredEdgeIndex = ids.index;
           console.log(
             '[VisualEditor] Edge hover IDs:',
             hoveredEdgeSourceId,
             '->',
             hoveredEdgeTargetId
           );
-          const pathRect = pathEl.getBoundingClientRect();
-          const viewRect = view?.getBoundingClientRect();
-          if (viewRect) {
-            hoveredEdgeX = pathRect.left - viewRect.left + pathRect.width / 2;
-            hoveredEdgeY = pathRect.top - viewRect.top + pathRect.height / 2;
-          }
         }
       } else if (!target.closest('.edge-action-btn')) {
-        // SVG paths are very thin (1px). To prevent the pencil from disappearing
-        // the moment the mouse slips off the 1px line, we keep the pencil visible
-        // as long as the mouse is within a 40px magnetic radius of it!
-        if (hoveredEdgePath && view) {
-          const viewRect = view.getBoundingClientRect();
-          const mouseX = e.clientX - viewRect.left;
-          const mouseY = e.clientY - viewRect.top;
-          const dist = Math.hypot(mouseX - hoveredEdgeX, mouseY - hoveredEdgeY);
-          if (dist > 60) {
-            hoveredEdgePath.classList.remove('edge-hovered');
-            hoveredEdgePath = null;
-            hoveredEdgeSourceId = null;
-            hoveredEdgeTargetId = null;
-            hoveredEdgeIndex = -1;
-          }
-        } else {
-          hoveredEdgePath?.classList.remove('edge-hovered');
-          hoveredEdgePath = null;
-          hoveredEdgeSourceId = null;
-          hoveredEdgeTargetId = null;
-          hoveredEdgeIndex = -1;
-        }
+        hoveredEdgePath?.classList.remove('edge-hovered');
+        hoveredEdgePath = null;
+        hoveredEdgeSourceId = null;
+        hoveredEdgeTargetId = null;
+        hoveredEdgeIndex = -1;
       }
     } else {
       hoveredEdgePath?.classList.remove('edge-hovered');
@@ -531,6 +609,12 @@
       // Don't delete if we are in an input/textarea
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+      // Delete selected edge
+      if (selectedEdgePath && selectedEdgeSourceId && selectedEdgeTargetId) {
+        deleteEdge(selectedEdgeSourceId, selectedEdgeTargetId, selectedEdgeIndex);
+        return;
+      }
+
       if (selectedNode) {
         const nodeId = getMermaidNodeId(selectedNode);
         if (nodeId) {
@@ -573,6 +657,8 @@
       return true;
     });
     updateCodeStore({ code: newLines.join('\n'), updateDiagram: true });
+    clearEdgeSelection();
+    hoveredEdgePath?.classList.remove('edge-hovered');
     hoveredEdgePath = null;
     hoveredEdgeSourceId = null;
     hoveredEdgeTargetId = null;
@@ -598,6 +684,8 @@
       }
     }
     updateCodeStore({ code: lines.join('\n'), updateDiagram: true });
+    clearEdgeSelection();
+    hoveredEdgePath?.classList.remove('edge-hovered');
     hoveredEdgePath = null;
     hoveredEdgeSourceId = null;
     hoveredEdgeTargetId = null;
@@ -791,7 +879,12 @@
 <div
   id="view"
   bind:this={view}
-  class={['relative h-full w-full', shouldShowGrid && `grid-bg-${$mode}`, error && 'opacity-50']}>
+  class={[
+    'relative h-full w-full',
+    shouldShowGrid && `grid-bg-${$mode}`,
+    error && 'opacity-50',
+    isSpaceDown && 'grab-mode'
+  ].join(' ')}>
   <div id="container" bind:this={container} class="h-full overflow-auto"></div>
 
   {#if isDragging}
@@ -809,6 +902,7 @@
   {/if}
 
   {#if selectedNode}
+    <!-- svelte-ignore a11y_consider_explicit_label -->
     <button
       class="quick-action-btn absolute z-50 flex cursor-pointer items-center justify-center rounded-full border border-white bg-indigo-500 text-white shadow-lg transition-transform hover:scale-110 hover:bg-indigo-600"
       style="left: {quickActionX}px; top: {quickActionY}px; width: {quickActionSize}px; height: {quickActionSize}px;"
@@ -841,19 +935,17 @@
     </button>
   {/if}
 
-  {#if hoveredEdgePath}
+  {#if selectedEdgePath}
     <!-- Reverse direction button -->
     <button
       class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 shadow hover:bg-slate-50"
-      style="left: {hoveredEdgeX - 40}px; top: {hoveredEdgeY - 12}px;"
+      style="left: {selectedEdgeX - 40}px; top: {selectedEdgeY - 28}px;"
       title="Reverse direction"
       aria-label="Reverse edge direction"
-      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
-      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
       onclick={(e) => {
         e.stopPropagation();
-        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
-          reverseEdge(hoveredEdgeSourceId, hoveredEdgeTargetId);
+        if (selectedEdgeSourceId && selectedEdgeTargetId) {
+          reverseEdge(selectedEdgeSourceId, selectedEdgeTargetId);
         }
       }}>
       <svg
@@ -873,30 +965,25 @@
     <!-- Edit label button -->
     <button
       class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-500 shadow hover:bg-indigo-50"
-      style="left: {hoveredEdgeX - 12}px; top: {hoveredEdgeY - 12}px;"
+      style="left: {selectedEdgeX - 12}px; top: {selectedEdgeY - 28}px;"
       title="Edit label"
       aria-label="Edit edge label"
-      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
-      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
       onclick={(e) => {
         e.stopPropagation();
-        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
-          editingEdgeSource = hoveredEdgeSourceId;
-          editingEdgeTarget = hoveredEdgeTargetId;
-          editingNodeId = `NEW_EDGE:${hoveredEdgeSourceId}:${hoveredEdgeTargetId}:${hoveredEdgeIndex}`;
+        if (selectedEdgeSourceId && selectedEdgeTargetId) {
+          editingEdgeSource = selectedEdgeSourceId;
+          editingEdgeTarget = selectedEdgeTargetId;
+          editingNodeId = `NEW_EDGE:${selectedEdgeSourceId}:${selectedEdgeTargetId}:${selectedEdgeIndex}`;
           editText = '';
-          editX = hoveredEdgeX - 40;
-          editY = hoveredEdgeY - 15;
+          editX = selectedEdgeX - 40;
+          editY = selectedEdgeY - 15;
           editW = 80;
           editH = 30;
           editFontSize = 14;
         } else {
-          console.warn('Could not find source/target for edge:', hoveredEdgePath);
+          console.warn('Could not find source/target for edge:', selectedEdgePath);
         }
-        hoveredEdgePath = null;
-        hoveredEdgeSourceId = null;
-        hoveredEdgeTargetId = null;
-        hoveredEdgeIndex = -1;
+        clearEdgeSelection();
       }}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -913,15 +1000,13 @@
     <!-- Delete edge button -->
     <button
       class="edge-action-btn absolute z-50 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-red-200 bg-white text-red-400 shadow hover:bg-red-50"
-      style="left: {hoveredEdgeX + 16}px; top: {hoveredEdgeY - 12}px;"
+      style="left: {selectedEdgeX + 16}px; top: {selectedEdgeY - 28}px;"
       title="Delete edge"
       aria-label="Delete edge"
-      onmouseover={() => (hoveredEdgePath = hoveredEdgePath)}
-      onfocus={() => (hoveredEdgePath = hoveredEdgePath)}
       onclick={(e) => {
         e.stopPropagation();
-        if (hoveredEdgeSourceId && hoveredEdgeTargetId) {
-          deleteEdge(hoveredEdgeSourceId, hoveredEdgeTargetId, hoveredEdgeIndex);
+        if (selectedEdgeSourceId && selectedEdgeTargetId) {
+          deleteEdge(selectedEdgeSourceId, selectedEdgeTargetId, selectedEdgeIndex);
         }
       }}>
       <svg
@@ -987,6 +1072,22 @@
     stroke: #6366f1 !important;
     stroke-width: 3px !important;
     filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.5)) !important;
+    cursor: pointer !important;
+  }
+
+  /* DEBUG: visible red paths to verify hit area injection */
+  :global(.edge-hit-area) {
+    stroke: transparent !important;
+    stroke-width: 50px !important;
+    fill: none !important;
+    cursor: pointer;
+    opacity: 0.5;
+  }
+
+  :global(.edge-selected) {
+    stroke: #4f46e5 !important;
+    stroke-width: 4px !important;
+    filter: drop-shadow(0 0 12px rgba(79, 70, 229, 0.7)) !important;
   }
 
   /* Readable edge label text */
@@ -1005,5 +1106,13 @@
   .grid-bg-dark {
     background-size: 30px 30px;
     background-image: radial-gradient(circle, #46464646 2px, #0000 2px);
+  }
+
+  :global(.grab-mode) {
+    cursor: grab !important;
+  }
+
+  :global(.grab-mode:active) {
+    cursor: grabbing !important;
   }
 </style>

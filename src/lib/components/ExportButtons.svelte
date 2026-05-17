@@ -6,6 +6,8 @@
   import { toBase64 } from 'js-base64';
   import DownloadIcon from '~icons/material-symbols/download';
 
+  let isDownloadingPNG = $state(false);
+
   const getFileName = (ext: string) =>
     `mermaid-diagram-${dayjs().format('YYYY-MM-DD-HHmmss')}.${ext}`;
 
@@ -43,42 +45,107 @@ ${svgString}`);
   };
 
   const onDownloadPNG = async () => {
+    console.log('png download started');
+    isDownloadingPNG = true;
     $inputStateStore.panZoom = false;
-    await new Promise((r) => setTimeout(r, 600));
-    await waitForRender();
+    try {
+      // Wait for pan/zoom state to take effect (fullscreen layout)
+      await new Promise((r) => setTimeout(r, 600));
+      console.log('after first wait');
 
-    const svg = document.querySelector<HTMLElement>('#container svg');
-    if (!svg) return;
+      // Wait for render to complete, with a 2-second timeout to avoid hanging
+      const renderTimeout = new Promise((resolve) => setTimeout(resolve, 2000));
+      await Promise.race([waitForRender(), renderTimeout]);
+      console.log('rendered');
 
-    const svgEl = svg as unknown as SVGSVGElement;
-    const box = svg.getBoundingClientRect();
-    const vb = svgEl.viewBox?.baseVal;
-    const w = vb && vb.width > 0 ? vb.width : box.width;
-    const h = vb && vb.height > 0 ? vb.height : box.height;
+      const svg = document.querySelector<HTMLElement>('#container svg');
+      if (!svg) {
+        console.error('SVG element not found');
+        return;
+      }
+      console.log('svg found');
 
-    const scale = 2;
-    const canvas = document.createElement('canvas');
-    canvas.width = w * scale;
-    canvas.height = h * scale;
+      const svgEl = svg as unknown as SVGSVGElement;
+      const box = svg.getBoundingClientRect();
+      const vb = svgEl.viewBox?.baseVal;
+      const w = vb && vb.width > 0 ? vb.width : box.width;
+      const h = vb && vb.height > 0 ? vb.height : box.height;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = w * scale;
+      canvas.height = h * scale;
 
-    const image = new Image();
-    image.onload = () => {
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-      simulateDownload(
-        getFileName('png'),
-        canvas.toDataURL('image/png').replace('image/png', 'image/octet-stream')
-      );
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.error('canvas context not found');
+        return;
+      }
+      ctx.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Build SVG string and load via data URL (simpler, less taint issues)
+      const svgBase64 = getBase64SVG(svg, canvas.width, canvas.height);
+      console.log('svg base64 created, length:', svgBase64.length);
+
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image();
+        const imageTimeout = setTimeout(() => {
+          reject(new Error('Image loading timeout after 5 seconds'));
+        }, 5000);
+
+        image.onload = () => {
+          clearTimeout(imageTimeout);
+          try {
+            console.log('image loaded, drawing to canvas');
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            // Convert canvas to data URL immediately after drawing
+            // (avoids some taint issues by not using toBlob)
+            console.log('converting canvas to PNG data URL');
+            const dataUrl = canvas.toDataURL('image/png');
+            console.log('data url created, length:', dataUrl.length);
+
+            // Convert data URL to blob for better download handling
+            fetch(dataUrl)
+              .then((res) => res.blob())
+              .then((blob) => {
+                console.log('blob created from data url');
+                const url = URL.createObjectURL(blob);
+                console.log('download url created:', url);
+                simulateDownload(getFileName('png'), url);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                resolve();
+              })
+              .catch((err) => {
+                console.warn('fetch/blob failed, using data URL directly:', err);
+                // Last resort: use data URL directly
+                simulateDownload(getFileName('png'), dataUrl);
+                resolve();
+              });
+          } catch (err) {
+            reject(err);
+          }
+        };
+
+        image.onerror = () => {
+          clearTimeout(imageTimeout);
+          reject(new Error('SVG failed to load as image'));
+        };
+
+        // Use data URL directly (more reliable than blob URLs for SVG)
+        image.crossOrigin = 'anonymous';
+        console.log('setting image src to data URL');
+        image.src = `data:image/svg+xml;base64,${svgBase64}`;
+      });
+      console.log('png download completed');
+    } catch (err) {
+      console.error('PNG download error:', err);
+    } finally {
+      console.log('finally called, restoring panZoom');
+      isDownloadingPNG = false;
       $inputStateStore.panZoom = true;
-    };
-    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-    setTimeout(() => {
-      if (!$inputStateStore.panZoom) $inputStateStore.panZoom = true;
-    }, 2000);
+    }
   };
 
   const onDownloadMMD = () => {
@@ -114,10 +181,14 @@ ${svgString}`);
   <Button
     variant="outline"
     size="sm"
-    disabled={hasError}
+    disabled={hasError || isDownloadingPNG}
     class="flex items-center gap-1.5 rounded-md border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-700 shadow-md transition-all hover:bg-gray-50 disabled:opacity-40"
     onclick={onDownloadPNG}>
-    <DownloadIcon class="size-3.5" />
+    {#if isDownloadingPNG}
+      <LoaderIcon class="size-3.5 animate-spin" />
+    {:else}
+      <DownloadIcon class="size-3.5" />
+    {/if}
     PNG
   </Button>
 </div>

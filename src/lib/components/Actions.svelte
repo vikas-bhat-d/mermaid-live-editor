@@ -96,71 +96,80 @@ ${svgString}`);
   };
 
   const exportImage = async (event: Event, exporter: Exporter) => {
-    $inputStateStore.panZoom = false;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    await waitForRender();
-    const canvas = document.createElement('canvas');
-    const svg = document.querySelector<HTMLElement>('#container svg');
-    if (!svg) {
-      throw new Error('svg not found');
-    }
-
-    const box = svg.getBoundingClientRect();
-
-    // In rough mode, SVG has width/height="100%" so getBoundingClientRect returns
-    // the container size, not the actual diagram size. Use viewBox dimensions instead.
-    const svgEl = svg as unknown as SVGSVGElement;
-    const viewBox = svgEl.viewBox?.baseVal;
-    const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
-    const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
-
-    if (imageSizeMode === 'width') {
-      const ratio = contentHeight / contentWidth;
-      canvas.width = imageSize;
-      canvas.height = imageSize * ratio;
-    } else if (imageSizeMode === 'height') {
-      const ratio = contentWidth / contentHeight;
-      canvas.width = imageSize * ratio;
-      canvas.height = imageSize;
-    } else {
-      const multiplier = 2;
-      canvas.width = contentWidth * multiplier;
-      canvas.height = contentHeight * multiplier;
-    }
-
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('context not found');
-    }
-
-    context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const image = new Image();
-    image.addEventListener('load', () => {
-      exporter(context, image)();
-      $inputStateStore.panZoom = true;
-    });
-    image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
-    // Fallback to set panZoom to true after 2 seconds
-    // This is a workaround for the case when the image is not loaded
-    setTimeout(() => {
-      if (!$inputStateStore.panZoom) {
-        $inputStateStore.panZoom = true;
-      }
-    }, 2000);
     event.stopPropagation();
     event.preventDefault();
+
+    $inputStateStore.panZoom = false;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await waitForRender();
+      const canvas = document.createElement('canvas');
+      const svg = document.querySelector<HTMLElement>('#container svg');
+      if (!svg) {
+        throw new Error('svg not found');
+      }
+
+      const box = svg.getBoundingClientRect();
+
+      // In rough mode, SVG has width/height="100%" so getBoundingClientRect returns
+      // the container size, not the actual diagram size. Use viewBox dimensions instead.
+      const svgEl = svg as unknown as SVGSVGElement;
+      const viewBox = svgEl.viewBox?.baseVal;
+      const contentWidth = viewBox && viewBox.width > 0 ? viewBox.width : box.width;
+      const contentHeight = viewBox && viewBox.height > 0 ? viewBox.height : box.height;
+
+      if (imageSizeMode === 'width') {
+        const ratio = contentHeight / contentWidth;
+        canvas.width = imageSize;
+        canvas.height = imageSize * ratio;
+      } else if (imageSizeMode === 'height') {
+        const ratio = contentWidth / contentHeight;
+        canvas.width = imageSize * ratio;
+        canvas.height = imageSize;
+      } else {
+        const multiplier = 2;
+        canvas.width = contentWidth * multiplier;
+        canvas.height = contentHeight * multiplier;
+      }
+
+      const context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error('context not found');
+      }
+
+      context.fillStyle = window.getComputedStyle(document.body).getPropertyValue('--background');
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image();
+        image.addEventListener('load', () => {
+          try {
+            console.log('called exporter');
+            exporter(context, image)();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+        image.addEventListener('error', () => reject(new Error('SVG image failed to load')));
+        image.src = `data:image/svg+xml;base64,${getBase64SVG(svg, canvas.width, canvas.height)}`;
+      });
+    } finally {
+      $inputStateStore.panZoom = true;
+    }
   };
 
   const downloadImage: Exporter = (context, image) => {
     return () => {
       const { canvas } = context;
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      simulateDownload(
-        getFileName('png'),
-        canvas.toDataURL('image/png').replace('image/png', 'image/octet-stream')
-      );
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        console.log(url);
+        simulateDownload(getFileName('png'), url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
     };
   };
 
@@ -197,6 +206,7 @@ ${svgString}`);
 
   const onDownloadPNG = async (event?: Event) => {
     if (event) {
+      console.log('png download called');
       await exportImage(event, downloadImage);
     }
   };

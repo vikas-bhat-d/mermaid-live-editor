@@ -41,11 +41,11 @@ export const inputStateStore = persist(writable(defaultState), localStorage(), '
 export const emptyCode = 'flowchart TD\n    ';
 
 export const freshStartCode = `flowchart TD
-    n1["Start"]
-    n2["Process"]
-    n3["End"]
-    n1 --> n2
-    n2 --> n3
+  n1["Start"]
+  n2["Process"]
+  n3["End"]
+  n1 --> n2
+  n2 --> n3
 `;
 
 // A code string is only valid if it begins with a recognised Mermaid diagram type keyword.
