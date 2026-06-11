@@ -14,12 +14,12 @@ import { errorDebug, formatJSON } from './util';
 
 export const defaultState: State = {
   code: `flowchart TD
-    A[Christmas] -->|Get money| B(Go shopping)
-    B --> C{Let me think}
-    C -->|One| D[Laptop]
-    C -->|Two| E[iPhone]
-    C -->|Three| F[fa:fa-car Car]
-  `,
+  n1["Start"]
+  n2["Process"]
+  n3["End"]
+  n1 --> n2
+  n2 --> n3
+`,
   grid: true,
   mermaid: formatJSON({
     theme: 'default'
